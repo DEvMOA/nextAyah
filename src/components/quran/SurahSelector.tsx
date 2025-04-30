@@ -3,6 +3,7 @@
 
 import type * as React from 'react';
 import { useState, useMemo, type ChangeEvent } from 'react';
+import { useRouter } from 'next/navigation'; // Import useRouter
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,15 +13,19 @@ import { Search } from 'lucide-react';
 
 interface SurahSelectorProps {
   surahs: Surah[];
-  selectedSurah: Surah | null;
-  onSelectSurah: (surah: Surah) => void;
+  // Removed selectedSurah and onSelectSurah props
 }
 
-export function SurahSelector({ surahs, selectedSurah, onSelectSurah }: SurahSelectorProps) {
+export function SurahSelector({ surahs }: SurahSelectorProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  const router = useRouter(); // Initialize router
 
   const handleSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
     setSearchTerm(event.target.value);
+  };
+
+  const handleSelectSurah = (surahId: number) => {
+    router.push(`/random/${surahId}`); // Navigate to the random verse page for the selected Surah
   };
 
   const filteredSurahs = useMemo(() => {
@@ -37,7 +42,7 @@ export function SurahSelector({ surahs, selectedSurah, onSelectSurah }: SurahSel
   }, [surahs, searchTerm]);
 
   return (
-    <Card className="w-full max-w-md shadow-lg">
+    <Card className="w-full shadow-lg">
       <CardHeader className="border-b">
         <CardTitle className="text-lg font-semibold">Select Surah</CardTitle>
         <div className="relative mt-2">
@@ -53,16 +58,17 @@ export function SurahSelector({ surahs, selectedSurah, onSelectSurah }: SurahSel
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="h-64">
+         {/* Adjust height as needed, maybe make it taller if it's the main content */}
+        <ScrollArea className="h-96">
           <div className="p-4 space-y-2">
             {filteredSurahs.length > 0 ? (
               filteredSurahs.map((surah) => (
                 <Button
                   key={surah.id}
-                  variant={selectedSurah?.id === surah.id ? 'default' : 'outline'}
-                  onClick={() => onSelectSurah(surah)}
+                  variant={'outline'} // Keep variant consistent or remove selection highlight
+                  onClick={() => handleSelectSurah(surah.id)} // Use router push
                   className="w-full justify-start text-left h-auto py-2"
-                  aria-pressed={selectedSurah?.id === surah.id}
+                  // No longer need aria-pressed
                 >
                   <div className="flex items-center justify-between w-full">
                     <div className="flex items-center gap-3">
@@ -71,7 +77,7 @@ export function SurahSelector({ surahs, selectedSurah, onSelectSurah }: SurahSel
                       </span>
                       <div>
                         <p className="font-medium">{surah.name}</p>
-                        <p className="text-xs text-muted-foreground">{surah.transliteration}</p>
+                        <p className="text-xs text-muted-foreground">{surah.transliteration} ({surah.translatedName})</p>
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground">{surah.verseCount} verses</p>
@@ -79,7 +85,7 @@ export function SurahSelector({ surahs, selectedSurah, onSelectSurah }: SurahSel
                 </Button>
               ))
             ) : (
-              <p className="text-sm text-muted-foreground text-center">No Surahs found.</p>
+              <p className="text-sm text-muted-foreground text-center py-4">No Surahs found.</p>
             )}
           </div>
         </ScrollArea>
