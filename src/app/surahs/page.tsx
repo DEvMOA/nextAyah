@@ -4,8 +4,15 @@
 import type * as React from 'react';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { getSurahList, type Surah } from '@/services/quran';
-import type { SurahConfig } from '@/types/quran';
+import {
+    getSurahList,
+    type Surah,
+    availableReciters,
+    availableTranslations,
+    DEFAULT_RECITER_ID,
+    DEFAULT_TRANSLATION_ID
+} from '@/services/quran';
+import type { SurahConfig, Reciter, TranslationInfo, QuranExplorerSettings } from '@/types/quran';
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -15,14 +22,25 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { AlertCircle, ArrowRight, Search } from 'lucide-react'; // Added Search icon
+import { AlertCircle, ArrowRight, Search, Settings } from 'lucide-react'; // Added Settings icon
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+    SelectGroup,
+    SelectLabel,
+} from "@/components/ui/select";
 
-const LOCAL_STORAGE_KEY = 'quranExplorerConfig';
+const LOCAL_STORAGE_KEY = 'quranExplorerSettings'; // Renamed key
 
 export default function ConfigurationPage() {
   const [allSurahs, setAllSurahs] = useState<Surah[]>([]);
   const [selectedConfigs, setSelectedConfigs] = useState<SurahConfig[]>([]);
+  const [selectedReciterId, setSelectedReciterId] = useState<number>(DEFAULT_RECITER_ID);
+  const [selectedTranslationId, setSelectedTranslationId] = useState<number>(DEFAULT_TRANSLATION_ID);
   const [isLoadingSurahs, setIsLoadingSurahs] = useState(true);
   const [errors, setErrors] = useState<Record<number, string>>({}); // Errors per Surah ID
   const [searchQuery, setSearchQuery] = useState(''); // State for search query
@@ -52,19 +70,36 @@ export default function ConfigurationPage() {
 
   // Load saved configuration from local storage on mount
   useEffect(() => {
-    const savedConfig = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (savedConfig) {
+    const savedSettings = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (savedSettings) {
       try {
-        const parsedConfig: SurahConfig[] = JSON.parse(savedConfig);
-         // Basic validation
-         if (Array.isArray(parsedConfig) && parsedConfig.every(c => typeof c.surahId === 'number' && typeof c.startVerse === 'number' && typeof c.endVerse === 'number')) {
-            setSelectedConfigs(parsedConfig);
+        const parsedSettings: QuranExplorerSettings = JSON.parse(savedSettings);
+         // Basic validation for the structure
+         if (
+            parsedSettings &&
+            typeof parsedSettings === 'object' &&
+            Array.isArray(parsedSettings.selectedConfigs) &&
+            typeof parsedSettings.reciterId === 'number' &&
+            typeof parsedSettings.translationId === 'number'
+          ) {
+            // Validate individual configs (more robust check)
+            const validConfigs = parsedSettings.selectedConfigs.filter(c =>
+                typeof c.surahId === 'number' &&
+                typeof c.startVerse === 'number' &&
+                typeof c.endVerse === 'number'
+            );
+            setSelectedConfigs(validConfigs);
+
+            // Validate reciter and translation IDs against available options
+            setSelectedReciterId(availableReciters.some(r => r.id === parsedSettings.reciterId) ? parsedSettings.reciterId : DEFAULT_RECITER_ID);
+            setSelectedTranslationId(availableTranslations.some(t => t.id === parsedSettings.translationId) ? parsedSettings.translationId : DEFAULT_TRANSLATION_ID);
+
          } else {
-           console.warn("Invalid config found in local storage.");
+           console.warn("Invalid settings found in local storage.");
            localStorage.removeItem(LOCAL_STORAGE_KEY);
          }
       } catch (error) {
-        console.error("Error parsing saved configuration:", error);
+        console.error("Error parsing saved settings:", error);
         localStorage.removeItem(LOCAL_STORAGE_KEY); // Clear invalid data
       }
     }
@@ -108,8 +143,8 @@ export default function ConfigurationPage() {
           surahId: surah.id,
           startVerse: 1,
           endVerse: surah.verseCount,
-          surahDetails: surah, // Include details
-        }]);
+          surahDetails: surah, // Include details initially for display/validation
+        }].sort((a, b) => a.surahId - b.surahId)); // Keep sorted
       }
     } else {
       // Remove config for this Surah
@@ -166,11 +201,15 @@ export default function ConfigurationPage() {
       return;
     }
 
-    // Strip surahDetails before saving to keep local storage light
-    const configsToSave = selectedConfigs.map(({ surahDetails, ...rest }) => rest);
+    // Prepare settings object to save
+    const settingsToSave: QuranExplorerSettings = {
+        selectedConfigs: selectedConfigs.map(({ surahDetails, ...rest }) => rest), // Strip surahDetails before saving
+        reciterId: selectedReciterId,
+        translationId: selectedTranslationId,
+    };
 
     // Save to local storage
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(configsToSave));
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settingsToSave));
 
     // Navigate to the random page
     router.push('/random');
@@ -183,12 +222,19 @@ export default function ConfigurationPage() {
         <Skeleton className="h-5 w-1/2" />
       </CardHeader>
       <CardContent className="p-4 space-y-3">
-         {/* Add skeleton for search bar */}
-        <div className="relative mb-4">
+         {/* Settings Skeletons */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+             <Skeleton className="h-10 w-full" />
+             <Skeleton className="h-10 w-full" />
+        </div>
+        <Separator />
+         {/* Search Skeleton */}
+        <div className="relative my-4">
           <Skeleton className="h-10 w-full" />
           <Skeleton className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5" />
         </div>
-        {[...Array(10)].map((_, i) => (
+        {/* Surah List Skeleton */}
+        {[...Array(5)].map((_, i) => (
           <div key={i} className="flex items-center space-x-4 p-3 border rounded">
             <Skeleton className="h-5 w-5" />
             <Skeleton className="h-6 flex-grow" />
@@ -205,17 +251,65 @@ export default function ConfigurationPage() {
 
   return (
     <main className="container mx-auto p-4 md:p-8 flex justify-center items-start min-h-screen">
-      <div className="w-full max-w-2xl space-y-6">
+      <div className="w-full max-w-3xl space-y-6">
         <Card className="w-full shadow-lg">
           <CardHeader>
-            <CardTitle className="text-xl font-semibold">Configure Quran Explorer</CardTitle>
-            <CardDescription>Select Surahs and specify verse ranges for random generation.</CardDescription>
+            <CardTitle className="text-xl font-semibold flex items-center gap-2">
+                <Settings className="h-5 w-5" /> Configure Quran Explorer
+            </CardTitle>
+            <CardDescription>Select reciter, translation, Surahs, and verse ranges for random generation.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {isLoadingSurahs ? (
               renderLoadingState()
             ) : (
               <>
+                 {/* Settings Selection */}
+                <div className="p-4 border-b grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div>
+                        <Label htmlFor="reciter-select">Reciter</Label>
+                        <Select
+                            value={String(selectedReciterId)}
+                            onValueChange={(value) => setSelectedReciterId(Number(value))}
+                        >
+                            <SelectTrigger id="reciter-select">
+                                <SelectValue placeholder="Select Reciter" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectGroup>
+                                    <SelectLabel>Available Reciters</SelectLabel>
+                                    {availableReciters.map((reciter) => (
+                                        <SelectItem key={reciter.id} value={String(reciter.id)}>
+                                            {reciter.name} {reciter.style ? `(${reciter.style})` : ''}
+                                        </SelectItem>
+                                    ))}
+                                </SelectGroup>
+                            </SelectContent>
+                        </Select>
+                     </div>
+                     <div>
+                        <Label htmlFor="translation-select">Translation</Label>
+                         <Select
+                            value={String(selectedTranslationId)}
+                            onValueChange={(value) => setSelectedTranslationId(Number(value))}
+                        >
+                            <SelectTrigger id="translation-select">
+                                <SelectValue placeholder="Select Translation" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectGroup>
+                                    <SelectLabel>Available Translations</SelectLabel>
+                                    {availableTranslations.map((translation) => (
+                                        <SelectItem key={translation.id} value={String(translation.id)}>
+                                            {translation.language}: {translation.name} {translation.author ? `(${translation.author})` : ''}
+                                        </SelectItem>
+                                    ))}
+                                </SelectGroup>
+                            </SelectContent>
+                        </Select>
+                     </div>
+                </div>
+
                 {/* Search Input */}
                 <div className="p-4 border-b relative">
                   <Search className="absolute left-7 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -227,7 +321,8 @@ export default function ConfigurationPage() {
                     className="pl-10" // Add padding for the icon
                   />
                 </div>
-                <ScrollArea className="h-[55vh] border-b">
+                {/* Surah Selection List */}
+                <ScrollArea className="h-[45vh] border-b">
                   <div className="p-4 space-y-4">
                     {filteredSurahs.length > 0 ? (
                       filteredSurahs.map((surah) => {
@@ -236,7 +331,7 @@ export default function ConfigurationPage() {
                         const error = errors[surah.id];
 
                         return (
-                          <div key={surah.id} className={`p-4 border rounded-md ${isSelected ? 'bg-muted/30' : ''} ${error ? 'border-destructive' : ''}`}>
+                          <div key={surah.id} className={`p-4 border rounded-md transition-colors ${isSelected ? 'bg-muted/30' : ''} ${error ? 'border-destructive' : ''}`}>
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-3">
                                 <Checkbox
@@ -247,7 +342,7 @@ export default function ConfigurationPage() {
                                 />
                                 <Label htmlFor={`surah-${surah.id}`} id={`label-${surah.id}`} className="cursor-pointer flex flex-col">
                                     <span className="font-medium">{surah.id}. {surah.name} ({surah.transliteration})</span>
-                                    <span className="text-xs text-muted-foreground">{surah.verseCount} verses - {surah.revelationPlace}</span>
+                                    <span className="text-xs text-muted-foreground">{surah.verseCount} verses - {surah.revelationPlace} - "{surah.translatedName}"</span>
                                 </Label>
                               </div>
                              </div>
@@ -273,7 +368,7 @@ export default function ConfigurationPage() {
                                     <Input
                                         id={`end-${surah.id}`}
                                         type="number"
-                                        min={config.startVerse} // Ensure end >= start
+                                        min={config.startVerse} // Ensure end >= start (though validation handles strict case)
                                         max={surah.verseCount}
                                         value={config.endVerse}
                                         onChange={(e) => handleRangeChange(surah.id, 'end', e.target.value)}
@@ -283,7 +378,7 @@ export default function ConfigurationPage() {
                                     </div>
                                 </div>
                                 {error && (
-                                    <p id={`error-${surah.id}`} className="text-xs text-destructive flex items-center gap-1">
+                                    <p id={`error-${surah.id}`} className="text-xs text-destructive flex items-center gap-1 pt-1">
                                         <AlertCircle className="h-3 w-3"/> {error}
                                     </p>
                                 )}
@@ -314,11 +409,11 @@ export default function ConfigurationPage() {
                     <CardTitle className="text-lg font-semibold">Selected Surahs & Ranges</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                    {selectedConfigs.sort((a, b) => a.surahId - b.surahId).map(config => {
+                    {selectedConfigs.map(config => { // Already sorted when adding/removing
                          const surah = surahMap.get(config.surahId);
                          const error = errors[config.surahId];
                         return (
-                            <div key={config.surahId} className={`flex justify-between items-center p-2 rounded ${error ? 'bg-destructive/10 text-destructive' : ''}`}>
+                            <div key={config.surahId} className={`flex justify-between items-center p-2 rounded ${error ? 'bg-destructive/10 text-destructive font-medium' : ''}`}>
                                 <span>{surah ? `${surah.id}. ${surah.transliteration}` : `Surah ${config.surahId}`}</span>
                                 <span className="text-sm">
                                     Verses: {config.startVerse} - {config.endVerse}
@@ -343,5 +438,3 @@ export default function ConfigurationPage() {
     </main>
   );
 }
-
-    

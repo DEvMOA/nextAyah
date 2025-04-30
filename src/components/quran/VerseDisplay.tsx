@@ -6,7 +6,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Verse, Surah } from '@/services/quran';
-// Removed import for getVerseAudioUrl as it's no longer used
 import { ChevronLeft, ChevronRight, RefreshCw, Play, Pause, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Slider } from '@/components/ui/slider';
@@ -15,32 +14,35 @@ import { cn } from '@/lib/utils'; // Import cn for conditional classes
 interface VerseDisplayProps {
   surah: Surah;
   currentVerse: Verse | null;
-  previousVerses: Verse[]; // Keep prop even if unused for potential future features
+  previousVerses: Verse[]; // Keep prop for potential future features
   onGenerateRandom: () => void;
   onNavigate: (direction: 'previous' | 'next') => void;
   rangeStart?: number;
   rangeEnd?: number;
+  reciterName?: string; // Add optional reciter name
+  translationName?: string; // Add optional translation name
 }
 
 export function VerseDisplay({
   surah,
   currentVerse,
-  previousVerses, // Keep prop even if unused for potential future features
+  previousVerses, // Keep prop
   onGenerateRandom,
   onNavigate,
   rangeStart = 1,
   rangeEnd = surah.verseCount,
+  reciterName,
+  translationName,
 }: VerseDisplayProps) {
   const { toast } = useToast();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoadingAudio, setIsLoadingAudio] = useState(false); // Keep for potential initial load/buffering indication if needed
-  // Removed audioUrl state, use currentVerse.audioUrl directly
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [volume, setVolume] = useState(0.7);
   const [isMuted, setIsMuted] = useState(false);
-  const [playbackError, setPlaybackError] = useState<string | null>(null); // State for playback errors
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
-  const audioUrl = currentVerse?.audioUrl; // Get audio URL directly from the verse object
+  const audioUrl = currentVerse?.audioUrl;
 
   const canNavigatePrevious = currentVerse ? currentVerse.id > rangeStart : false;
   const canNavigateNext = currentVerse ? currentVerse.id < rangeEnd : false;
@@ -54,88 +56,7 @@ export function VerseDisplay({
     }
   }, []);
 
-  // Effect to handle changes in audioUrl (when currentVerse changes)
-  useEffect(() => {
-    stopAndResetAudio(); // Stop previous audio immediately
-    setPlaybackError(null); // Clear previous errors
-    setIsLoadingAudio(false); // Reset loading state
-
-    if (audioUrl) {
-       // No need to fetch, just prepare the audio element
-       setIsLoadingAudio(true); // Show loading briefly while setting up
-       if (audioRef.current) {
-            // If element exists, update src and preload
-            audioRef.current.src = audioUrl;
-            audioRef.current.preload = 'metadata';
-             // Add load listener to turn off loading indicator
-            const handleLoadedMetadata = () => setIsLoadingAudio(false);
-            audioRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
-            // Add error listener within this effect
-            const handleError = (e: Event) => {
-                console.error("Audio element error:", e);
-                const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
-                setPlaybackError(`Audio Error: ${errorMsg}`);
-                setIsPlaying(false); // Stop trying to play on error
-                setIsLoadingAudio(false);
-                toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
-            };
-            audioRef.current.addEventListener('error', handleError);
-
-            return () => {
-                 // Cleanup listeners
-                if (audioRef.current){
-                    audioRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                    audioRef.current.removeEventListener('error', handleError);
-                }
-            }
-       } else {
-           // If element doesn't exist, create it
-            const newAudio = new Audio(audioUrl);
-            newAudio.volume = isMuted ? 0 : volume;
-            newAudio.muted = isMuted;
-            newAudio.preload = 'metadata';
-            newAudio.addEventListener('ended', handleAudioEnded);
-
-             const handleLoadedMetadata = () => setIsLoadingAudio(false);
-             newAudio.addEventListener('loadedmetadata', handleLoadedMetadata);
-
-            const handleError = (e: Event) => {
-                console.error("Audio element error:", e);
-                const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
-                setPlaybackError(`Audio Error: ${errorMsg}`);
-                setIsPlaying(false); // Stop trying to play on error
-                 setIsLoadingAudio(false);
-                toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
-            };
-            newAudio.addEventListener('error', handleError);
-
-            audioRef.current = newAudio;
-
-             return () => {
-                 // Cleanup listeners
-                if(newAudio){ // Use the created instance in cleanup
-                    newAudio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-                    newAudio.removeEventListener('ended', handleAudioEnded);
-                    newAudio.removeEventListener('error', handleError);
-                }
-             }
-       }
-    } else if (!audioUrl && audioRef.current) {
-        // If verse changes to one without audio, cleanup
-        stopAndResetAudio();
-         // Remove listeners if they were attached
-         audioRef.current.removeEventListener('ended', handleAudioEnded);
-         // Consider removing error listener if it was attached elsewhere or robustly
-        audioRef.current = null; // Allow GC
-    } else {
-        // No audioUrl and no audio element, ensure loading is false
-        setIsLoadingAudio(false);
-    }
-
-  }, [audioUrl, stopAndResetAudio, isMuted, volume, toast]); // Dependencies updated
-
-
-  // Audio ended event handler
+  // Audio ended event handler - defined using useCallback
   const handleAudioEnded = useCallback(() => {
     setIsPlaying(false);
     if (audioRef.current) {
@@ -143,26 +64,69 @@ export function VerseDisplay({
     }
   }, []);
 
-  // Setup audio element volume/mute state and add/remove 'ended' listener based on audioRef.current existence
+  // Effect to handle changes in audioUrl (when currentVerse changes) and setup audio element
   useEffect(() => {
-    const currentAudio = audioRef.current; // Capture ref value
+    stopAndResetAudio(); // Stop previous audio immediately
+    setPlaybackError(null); // Clear previous errors
+    setIsLoadingAudio(false); // Reset loading state
 
-    if (currentAudio) {
-        // Update volume and mute state
-        currentAudio.volume = volume;
-        currentAudio.muted = isMuted;
+    if (audioUrl) {
+       setIsLoadingAudio(true); // Indicate loading while setting up
+       const newAudio = new Audio(audioUrl);
+       audioRef.current = newAudio;
 
-        // Add ended listener
-        currentAudio.addEventListener('ended', handleAudioEnded);
+       // Set initial properties
+       newAudio.volume = isMuted ? 0 : volume;
+       newAudio.muted = isMuted;
+       newAudio.preload = 'metadata'; // Start loading metadata
+
+       // Event listeners
+       const handleLoadedMetadata = () => setIsLoadingAudio(false);
+       const handleError = (e: Event) => {
+           console.error("Audio element error:", e);
+           const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
+           setPlaybackError(`Audio Error: ${errorMsg}`);
+           setIsPlaying(false);
+           setIsLoadingAudio(false);
+           toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
+       };
+
+       newAudio.addEventListener('loadedmetadata', handleLoadedMetadata);
+       newAudio.addEventListener('ended', handleAudioEnded); // Use the stable callback
+       newAudio.addEventListener('error', handleError);
+
+       // Cleanup function
+       return () => {
+           stopAndResetAudio(); // Ensure audio stops on component unmount or verse change
+           if (newAudio) { // Check if newAudio exists before removing listeners
+                newAudio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                newAudio.removeEventListener('ended', handleAudioEnded);
+                newAudio.removeEventListener('error', handleError);
+           }
+           audioRef.current = null; // Help with garbage collection
+       };
+    } else {
+        // No audio URL for this verse
+        setIsLoadingAudio(false); // Ensure loading is off
+        if (audioRef.current) {
+            // If an old audio element exists, clean it up
+            stopAndResetAudio();
+            audioRef.current = null;
+        }
     }
+  // Dependencies: Ensure effect runs when audioUrl changes, or when related state changes require re-setup (though volume/mute are handled separately now)
+  // handleAudioEnded is stable due to useCallback. stopAndResetAudio is also stable.
+  }, [audioUrl, isMuted, volume, stopAndResetAudio, handleAudioEnded, toast]);
 
-    // Cleanup function to remove the ended listener
-    return () => {
+
+  // Effect to update volume and mute state on the current audio element
+  useEffect(() => {
+      const currentAudio = audioRef.current;
       if (currentAudio) {
-        currentAudio.removeEventListener('ended', handleAudioEnded);
+          currentAudio.volume = isMuted ? 0 : volume;
+          currentAudio.muted = isMuted;
       }
-    };
-  }, [volume, isMuted, handleAudioEnded]); // Only depend on state affecting the audio element directly and the handler
+  }, [volume, isMuted]);
 
 
  const togglePlayPause = useCallback(() => {
@@ -195,32 +159,26 @@ export function VerseDisplay({
    const handleVolumeChange = (newVolume: number[]) => {
     const vol = newVolume[0];
     setVolume(vol);
-    if (audioRef.current) {
-        audioRef.current.volume = vol;
-        // If volume is adjusted above 0, unmute
-        if (vol > 0 && isMuted) {
-            setIsMuted(false);
-            audioRef.current.muted = false;
-        }
-        // If volume is set to 0, mute
-        else if (vol === 0 && !isMuted) {
-             setIsMuted(true);
-             audioRef.current.muted = true;
-        }
+    // We no longer need to directly set audioRef.current.volume here
+    // as the separate useEffect handles it based on the 'volume' state.
+
+    // Adjust mute state based on volume
+    if (vol > 0 && isMuted) {
+        setIsMuted(false);
+    } else if (vol === 0 && !isMuted) {
+         setIsMuted(true);
     }
   };
 
    const toggleMute = () => {
     const newMutedState = !isMuted;
     setIsMuted(newMutedState);
-    if (audioRef.current) {
-      audioRef.current.muted = newMutedState;
-       // If unmuting and volume was 0, set a default volume
-       if (!newMutedState && volume === 0) {
-          const defaultVol = 0.5;
-          setVolume(defaultVol);
-          audioRef.current.volume = defaultVol;
-       }
+    // No direct audioRef manipulation needed here either.
+
+    // If unmuting and volume was 0, set a default volume
+    if (!newMutedState && volume === 0) {
+       const defaultVol = 0.5;
+       setVolume(defaultVol); // This will trigger the volume useEffect
     }
   };
 
@@ -228,9 +186,13 @@ export function VerseDisplay({
   return (
     <Card className="w-full shadow-lg">
       <CardHeader className="border-b">
-        <CardTitle className="text-xl font-semibold">{surah.name} ({surah.transliteration})</CardTitle>
+        <CardTitle className="text-xl font-semibold">{surah.name} ({surah.transliteration}) - "{surah.translatedName}"</CardTitle>
         <CardDescription>
-             Verses {rangeStart} - {rangeEnd} (of {surah.verseCount})
+             Displaying Verse {currentVerse?.id} (Range: {rangeStart}-{rangeEnd} of {surah.verseCount})
+             <br /> {/* Line break for clarity */}
+             <span className="text-xs">
+                Reciter: {reciterName || 'Default'} | Translation: {translationName || 'Default'}
+             </span>
         </CardDescription>
       </CardHeader>
       <CardContent className="p-6 space-y-6">
@@ -238,18 +200,18 @@ export function VerseDisplay({
           <div
             className={cn(
                 "space-y-4 p-4 border rounded-md bg-card shadow",
-                // Add cursor pointer only when audio is available and not errored
+                // Make clickable only if audio is ready and playable
                 audioUrl && !playbackError && !isLoadingAudio ? "cursor-pointer hover:bg-muted/50 transition-colors" : ""
             )}
-            onClick={audioUrl && !playbackError && !isLoadingAudio ? togglePlayPause : undefined} // Make text clickable for play/pause, check loading state
+            onClick={audioUrl && !playbackError && !isLoadingAudio ? togglePlayPause : undefined}
              role={audioUrl && !playbackError ? "button" : undefined}
              aria-label={audioUrl && !playbackError ? (isPlaying ? "Pause verse audio" : "Play verse audio") : undefined}
-             tabIndex={audioUrl && !playbackError ? 0 : -1} // Make it focusable if clickable
-             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { audioUrl && !playbackError && !isLoadingAudio && togglePlayPause(); e.preventDefault(); }}} // Keyboard accessibility, check loading state
+             tabIndex={audioUrl && !playbackError ? 0 : -1}
+             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { audioUrl && !playbackError && !isLoadingAudio && togglePlayPause(); e.preventDefault(); }}}
           >
             <p lang="ar" dir="rtl" className="text-2xl font-medium text-right mb-2">{currentVerse.arabicText}</p>
             <p className="text-lg italic">"{currentVerse.translation}"</p>
-            <div className="flex justify-between items-center mt-4 pt-4 border-t" onClick={(e) => e.stopPropagation()} > {/* Prevent controls click from bubbling to card */}
+            <div className="flex justify-between items-center mt-4 pt-4 border-t" onClick={(e) => e.stopPropagation()} >
                <p className="text-sm text-muted-foreground">({surah.transliteration} {surah.id}:{currentVerse.id})</p>
                {/* Audio Controls */}
                <div className="flex items-center gap-3">
@@ -257,7 +219,7 @@ export function VerseDisplay({
                     variant="ghost"
                     size="icon"
                     onClick={togglePlayPause}
-                    disabled={isLoadingAudio || !audioUrl || !!playbackError} // Disable on error too
+                    disabled={isLoadingAudio || !audioUrl || !!playbackError}
                     aria-label={isPlaying ? "Pause verse audio" : "Play verse audio"}
                   >
                     {isLoadingAudio ? <Loader2 className="h-5 w-5 animate-spin" /> : isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 text-primary" />}
@@ -266,7 +228,7 @@ export function VerseDisplay({
                     variant="ghost"
                     size="icon"
                     onClick={toggleMute}
-                     disabled={!audioUrl || !!playbackError} // Disable on error
+                     disabled={!audioUrl || !!playbackError}
                     aria-label={isMuted ? "Unmute" : "Mute"}
                   >
                     {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
@@ -278,14 +240,14 @@ export function VerseDisplay({
                     className={cn("w-[100px]", !audioUrl || !!playbackError ? 'opacity-50 cursor-not-allowed' : '')}
                     onValueChange={handleVolumeChange}
                     aria-label="Volume control"
-                     disabled={!audioUrl || !!playbackError} // Disable on error
+                     disabled={!audioUrl || !!playbackError}
                     />
                </div>
             </div>
              {playbackError && (
                 <p className="text-xs text-destructive text-center mt-2">{playbackError}</p>
             )}
-              {!audioUrl && !isLoadingAudio && !playbackError && ( // Show message if audio is definitively unavailable
+              {!audioUrl && !isLoadingAudio && !playbackError && (
                 <p className="text-xs text-muted-foreground text-center mt-2">Audio not available for this verse/reciter.</p>
              )}
           </div>

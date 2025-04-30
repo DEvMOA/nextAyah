@@ -5,8 +5,18 @@ import type * as React from 'react';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { VerseDisplay } from '@/components/quran/VerseDisplay';
-import { getSurahDetails, getVerse, type Surah, type Verse } from '@/services/quran';
-import type { SurahConfig } from '@/types/quran';
+import {
+    getSurahDetails,
+    getVerse,
+    getRandomVerseInRange, // Use the correct function
+    type Surah,
+    type Verse,
+    DEFAULT_RECITER_ID,
+    DEFAULT_TRANSLATION_ID,
+    availableReciters,
+    availableTranslations
+} from '@/services/quran';
+import type { SurahConfig, QuranExplorerSettings, Reciter, TranslationInfo } from '@/types/quran'; // Import settings type
 import { useToast } from '@/hooks/use-toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,91 +25,143 @@ import Link from 'next/link';
 import { ArrowLeft, AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
-const LOCAL_STORAGE_KEY = 'quranExplorerConfig';
+const LOCAL_STORAGE_KEY = 'quranExplorerSettings'; // Use the correct key
 
 export default function RandomVersePage() {
   const router = useRouter();
   const { toast } = useToast();
 
+  // State for settings
+  const [settings, setSettings] = useState<QuranExplorerSettings | null>(null);
   const [configs, setConfigs] = useState<SurahConfig[]>([]);
+  const [reciterId, setReciterId] = useState<number>(DEFAULT_RECITER_ID);
+  const [translationId, setTranslationId] = useState<number>(DEFAULT_TRANSLATION_ID);
+
+  // State for verse display
   const [currentVerse, setCurrentVerse] = useState<Verse | null>(null);
   const [currentSurahDetails, setCurrentSurahDetails] = useState<Surah | null>(null);
   const [currentConfig, setCurrentConfig] = useState<SurahConfig | null>(null);
-  const [previousVerses, setPreviousVerses] = useState<Verse[]>([]);
-  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
+  const [previousVerses, setPreviousVerses] = useState<Verse[]>([]); // Keep for potential future use
+
+  // State for loading/error
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [isLoadingVerse, setIsLoadingVerse] = useState(false);
-  const [errorLoadingConfig, setErrorLoadingConfig] = useState<string | null>(null);
+  const [errorLoadingSettings, setErrorLoadingSettings] = useState<string | null>(null);
 
+  // Computed values for display
+  const selectedReciter = availableReciters.find(r => r.id === reciterId);
+  const selectedTranslation = availableTranslations.find(t => t.id === translationId);
 
- // Load configuration and fetch initial random verse
- useEffect(() => {
-    const savedConfig = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!savedConfig) {
-        setErrorLoadingConfig("No configuration found. Please configure your Surah selections first.");
-        setIsLoadingConfig(false);
+  // Load settings from local storage and fetch initial random verse
+  useEffect(() => {
+    const savedSettings = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!savedSettings) {
+        setErrorLoadingSettings("No configuration found. Please configure your selections first.");
+        setIsLoadingSettings(false);
         return;
     }
 
     try {
-        const parsedConfig: SurahConfig[] = JSON.parse(savedConfig);
-        if (!Array.isArray(parsedConfig) || parsedConfig.length === 0 || !parsedConfig.every(c => typeof c.surahId === 'number' && typeof c.startVerse === 'number' && typeof c.endVerse === 'number')) {
-            throw new Error("Invalid or empty configuration data.");
+        const parsedSettings: QuranExplorerSettings = JSON.parse(savedSettings);
+
+        // Validate parsed settings structure
+        if (
+            !parsedSettings || typeof parsedSettings !== 'object' ||
+            !Array.isArray(parsedSettings.selectedConfigs) ||
+            typeof parsedSettings.reciterId !== 'number' ||
+            typeof parsedSettings.translationId !== 'number'
+        ) {
+            throw new Error("Invalid settings data format.");
         }
-        setConfigs(parsedConfig);
-        // Fetch initial random verse *after* setting configs
-        fetchRandomVerse(parsedConfig);
+
+        // Validate Surah configurations
+        const validConfigs = parsedSettings.selectedConfigs.filter(c =>
+            typeof c.surahId === 'number' &&
+            typeof c.startVerse === 'number' &&
+            typeof c.endVerse === 'number' &&
+            c.startVerse > 0 && c.endVerse > 0 && c.startVerse <= c.endVerse
+        );
+
+        if (validConfigs.length === 0) {
+            throw new Error("No valid Surah configurations found in settings.");
+        }
+
+        // Validate reciter and translation IDs
+        const validReciterId = availableReciters.some(r => r.id === parsedSettings.reciterId)
+            ? parsedSettings.reciterId
+            : DEFAULT_RECITER_ID;
+        const validTranslationId = availableTranslations.some(t => t.id === parsedSettings.translationId)
+            ? parsedSettings.translationId
+            : DEFAULT_TRANSLATION_ID;
+
+        // Update state
+        setSettings(parsedSettings); // Store the full settings object if needed elsewhere
+        setConfigs(validConfigs);
+        setReciterId(validReciterId);
+        setTranslationId(validTranslationId);
+
+        // Fetch initial random verse *after* setting state
+        fetchRandomVerse(validConfigs, validReciterId, validTranslationId);
+
     } catch (error) {
-        console.error("Error loading or parsing configuration:", error);
-        setErrorLoadingConfig(`Failed to load configuration. Please reconfigure. Error: ${error instanceof Error ? error.message : String(error)}`);
+        console.error("Error loading or parsing settings:", error);
+        setErrorLoadingSettings(`Failed to load settings. Please reconfigure. Error: ${error instanceof Error ? error.message : String(error)}`);
         localStorage.removeItem(LOCAL_STORAGE_KEY); // Clear invalid data
     } finally {
-        setIsLoadingConfig(false);
+        setIsLoadingSettings(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []); // Run only once on mount
+  }, []); // Run only once on mount
 
 
   // Fetch a specific verse within the context of the *current* Surah and range
-  const fetchVerse = useCallback(async (verseId: number) => {
-     if (!currentSurahDetails || !currentConfig) return; // Need context
+  const fetchVerse = useCallback(async (verseIdToFetch: number) => {
+     if (!currentSurahDetails || !currentConfig || !settings) return; // Need context
 
      // Check if the requested verse is within the configured range
-     if (verseId < currentConfig.startVerse || verseId > currentConfig.endVerse) {
-         // console.log(`Verse ${verseId} is outside the configured range (${currentConfig.startVerse}-${currentConfig.endVerse}) for Surah ${currentSurahDetails.id}.`);
-         // Optionally, show a toast or simply do nothing
-         toast({ title: "Out of Range", description: `Verse ${verseId} is outside the configured range.`, variant: "default"});
+     if (verseIdToFetch < currentConfig.startVerse || verseIdToFetch > currentConfig.endVerse) {
+         toast({ title: "Out of Range", description: `Verse ${verseIdToFetch} is outside the configured range.`, variant: "default"});
          return;
      }
 
     setIsLoadingVerse(true);
     try {
-      const verse = await getVerse(currentSurahDetails.id, verseId);
-      if (currentVerse) {
-         // Add the *previous* currentVerse to the history if navigating
-         if (!previousVerses.some(v => v.id === currentVerse.id)) {
-             // Keep history sorted chronologically
-             setPreviousVerses(prev => [...prev, currentVerse].sort((a, b) => a.id - b.id));
-         }
-      } else {
-          // If it's the first verse loaded (after random), clear history
-          setPreviousVerses([]);
-      }
+      // Pass the current translation and reciter IDs
+      const verse = await getVerse(currentSurahDetails.id, verseIdToFetch, translationId, reciterId);
+
+      // Keep history management if needed in the future
+      // if (currentVerse) {
+      //    if (!previousVerses.some(v => v.id === currentVerse.id)) {
+      //        setPreviousVerses(prev => [...prev, currentVerse].sort((a, b) => a.id - b.id));
+      //    }
+      // } else {
+      //     setPreviousVerses([]);
+      // }
+
       setCurrentVerse(verse);
     } catch (error) {
-      console.error(`Error fetching verse ${currentSurahDetails.id}:${verseId}:`, error);
+      console.error(`Error fetching verse ${currentSurahDetails.id}:${verseIdToFetch}:`, error);
       toast({
         title: "Error Loading Verse",
-        description: `Failed to load verse ${verseId}. Please try again.`,
+        description: `Failed to load verse ${verseIdToFetch}. Please try again.`,
         variant: "destructive",
       });
     } finally {
       setIsLoadingVerse(false);
     }
-  }, [currentSurahDetails, currentConfig, currentVerse, previousVerses, toast]); // Added dependencies
+     // Use the correct dependencies, including settings IDs
+  }, [currentSurahDetails, currentConfig, settings, translationId, reciterId, toast]);
 
   // Fetch a random verse based on the loaded configurations
-  const fetchRandomVerse = useCallback(async (currentConfigs?: SurahConfig[]) => {
-     const conf = currentConfigs || configs; // Use provided or state configs
+  const fetchRandomVerse = useCallback(async (
+      currentConfigs?: SurahConfig[],
+      currentReciterId?: number,
+      currentTranslationId?: number
+    ) => {
+     const conf = currentConfigs || configs;
+     const recId = currentReciterId ?? reciterId;
+     const transId = currentTranslationId ?? translationId;
+
      if (conf.length === 0) {
          toast({ title: "No Configuration", description: "Cannot generate random verse without configuration.", variant: "destructive"});
          return;
@@ -114,25 +176,25 @@ export default function RandomVersePage() {
         const selectedConfig = conf[randomConfigIndex];
         setCurrentConfig(selectedConfig); // Store the current config context
 
-        // 2. Fetch Surah details if not already present (unlikely if configured properly, but safe)
-        let surahDetails = selectedConfig.surahDetails;
-        if (!surahDetails) {
-            surahDetails = await getSurahDetails(selectedConfig.surahId);
-            // Optionally update the config in state if needed, but might not be necessary just for display
-        }
-         setCurrentSurahDetails(surahDetails); // Store current surah context
+        // 2. Fetch Surah details (essential for validation and display)
+        // Even if stored in config initially, re-fetch for safety/freshness if needed
+        const surahDetails = await getSurahDetails(selectedConfig.surahId);
+        setCurrentSurahDetails(surahDetails); // Store current surah context
 
-         // Validate the range again (safety check)
+         // Validate the range against fetched details
         if (selectedConfig.startVerse > selectedConfig.endVerse || selectedConfig.startVerse < 1 || selectedConfig.endVerse > surahDetails.verseCount) {
             throw new Error(`Invalid range ${selectedConfig.startVerse}-${selectedConfig.endVerse} for Surah ${surahDetails.id} (Max: ${surahDetails.verseCount})`);
         }
 
-        // 3. Pick a random verse *within the specified range*
-        const rangeSize = selectedConfig.endVerse - selectedConfig.startVerse + 1;
-        const randomVerseIdInRange = Math.floor(Math.random() * rangeSize) + selectedConfig.startVerse;
-
-        // 4. Fetch the verse
-        const verse = await getVerse(selectedConfig.surahId, randomVerseIdInRange);
+        // 3. Use getRandomVerseInRange which handles picking the verse ID and fetching
+        const verse = await getRandomVerseInRange(
+            selectedConfig.surahId,
+            selectedConfig.startVerse,
+            selectedConfig.endVerse,
+            transId, // Pass translation ID
+            recId, // Pass reciter ID
+            surahDetails.verseCount // Pass known verse count to potentially optimize
+        );
         setCurrentVerse(verse);
 
     } catch (error) {
@@ -148,7 +210,7 @@ export default function RandomVersePage() {
     } finally {
       setIsLoadingVerse(false);
     }
-  }, [configs, toast]); // Removed getVerse dependency, handled internally
+  }, [configs, reciterId, translationId, toast]); // Use correct dependencies
 
    // Wrapper for fetchRandomVerse to be used by the button
    const handleGenerateRandom = () => {
@@ -161,19 +223,20 @@ export default function RandomVersePage() {
 
     const targetVerseId = direction === 'previous' ? currentVerse.id - 1 : currentVerse.id + 1;
 
-    // Fetch the verse - fetchVerse includes range check
+    // Fetch the verse - fetchVerse includes range check and uses current settings
     fetchVerse(targetVerseId);
   };
 
-  const renderLoadingState = () => (
+  const renderLoadingState = (message: string = "Loading configuration...") => (
       <Card className="w-full shadow-lg">
           <CardHeader className="border-b">
               <Skeleton className="h-7 w-1/2" />
               <Skeleton className="h-5 w-1/4 mt-1" />
+              <Skeleton className="h-4 w-1/3 mt-2" />
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-               <Skeleton className="h-40 w-full" /> {/* Previous verses area */}
-               <Skeleton className="h-24 w-full" /> {/* Current verse area */}
+               <Skeleton className="h-6 w-3/4 mx-auto mb-6" /> {/* Placeholder for message */}
+               <Skeleton className="h-40 w-full" /> {/* Verse area skeleton */}
           </CardContent>
           <CardFooter className="flex justify-between items-center border-t pt-4">
                <Skeleton className="h-10 w-24" />
@@ -206,21 +269,21 @@ export default function RandomVersePage() {
    );
 
 
-  if (isLoadingConfig) {
+  if (isLoadingSettings) {
        return (
            <main className="container mx-auto p-4 md:p-8 flex flex-col items-center min-h-screen">
                <div className="w-full max-w-3xl">
-                   {renderLoadingState()}
+                   {renderLoadingState("Loading settings...")}
                </div>
            </main>
        );
   }
 
-   if (errorLoadingConfig) {
+   if (errorLoadingSettings) {
         return (
            <main className="container mx-auto p-4 md:p-8 flex flex-col items-center min-h-screen">
                <div className="w-full max-w-3xl">
-                   {renderErrorState(errorLoadingConfig)}
+                   {renderErrorState(errorLoadingSettings)}
                </div>
            </main>
         );
@@ -229,21 +292,26 @@ export default function RandomVersePage() {
   return (
     <main className="container mx-auto p-4 md:p-8 flex flex-col items-center min-h-screen">
         <div className="w-full max-w-3xl">
-             <div className="mb-6">
+             <div className="mb-4 flex justify-between items-center">
                 <Button variant="outline" size="sm" asChild>
                     <Link href="/surahs">
                         <ArrowLeft className="mr-2 h-4 w-4" /> Back to Configuration
                     </Link>
                 </Button>
+                 {/* Display current settings */}
+                <div className="text-right text-xs text-muted-foreground">
+                    <p>Reciter: {selectedReciter?.name || `ID ${reciterId}`}</p>
+                    <p>Translation: {selectedTranslation?.name || `ID ${translationId}`}</p>
+                </div>
             </div>
 
             {isLoadingVerse ? (
-                renderLoadingState() // Show loading skeleton when verse is loading
+                renderLoadingState("Loading verse...") // Specific message for verse loading
             ) : !currentSurahDetails || !currentVerse || !currentConfig ? (
-                 // Show placeholder or message if no verse is loaded yet (e.g., after error)
+                 // Initial state or after an error cleared the verse
                  <Card className="w-full shadow-lg flex flex-col items-center justify-center h-64 p-8 text-center">
                      <CardTitle>Ready to Explore</CardTitle>
-                     <CardDescription className="mb-6">Click "Generate Random Verse" to begin.</CardDescription>
+                     <CardDescription className="mb-6">Click "Generate Random Verse" to begin using your selected settings.</CardDescription>
                      <Button onClick={handleGenerateRandom}>Generate Random Verse</Button>
                  </Card>
              ) : (
@@ -251,12 +319,15 @@ export default function RandomVersePage() {
                  <VerseDisplay
                      surah={currentSurahDetails}
                      currentVerse={currentVerse}
-                     previousVerses={previousVerses}
+                     // previousVerses prop is still present but not used for display
+                     previousVerses={[]}
                      onGenerateRandom={handleGenerateRandom}
                      onNavigate={handleNavigate}
                      // Pass range limits for disabling navigation buttons correctly
                      rangeStart={currentConfig.startVerse}
                      rangeEnd={currentConfig.endVerse}
+                     reciterName={selectedReciter?.name} // Pass display names
+                     translationName={selectedTranslation?.name}
                  />
             )}
         </div>

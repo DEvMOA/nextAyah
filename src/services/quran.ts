@@ -1,9 +1,33 @@
 // src/services/quran.ts
 
-import type { Surah, Verse } from '@/types/quran'; // Import types
+import type { Surah, Verse, Reciter, TranslationInfo } from '@/types/quran'; // Import types
 
 const API_BASE_URL = 'https://api.quran.com/api/v4';
 const AUDIO_BASE_URL = 'https://verses.quran.com/'; // Base URL for audio files
+
+// --- Available Reciters ---
+// IDs based on https://quran.com/reciters (inspect network requests or common knowledge)
+export const availableReciters: Reciter[] = [
+    { id: 7, name: "Mishary Rashid Alafasy", style: "Murattal" },
+    { id: 1, name: "Abdul Basit Abdul Samad", style: "Mujawwad" },
+    { id: 2, name: "Abdur-Rahman as-Sudais", style: "Murattal" },
+    { id: 4, name: "Abu Bakr al-Shatri", style: "Murattal" },
+    { id: 5, name: "Hani ar-Rifai", style: "Murattal" },
+    // Add more as desired
+];
+export const DEFAULT_RECITER_ID = 7; // Mishary Rashid Alafasy
+
+// --- Available Translations ---
+// IDs based on https://quran.com/translations or API docs
+export const availableTranslations: TranslationInfo[] = [
+    { id: 131, language: "English", name: "Dr. Mustafa Khattab, the Clear Quran", author: "Dr. Mustafa Khattab" },
+    { id: 20, language: "English", name: "Saheeh International", author: "Saheeh International" },
+    { id: 68, language: "French", name: "Le Noble Coran (Muhammad Hamidullah)", author: "Muhammad Hamidullah" },
+    { id: 33, language: "French", name: "Hamidullah", author: "Muhammad Hamidullah" }, // Another French option if needed
+    // Add more as desired
+];
+export const DEFAULT_TRANSLATION_ID = 131; // Dr. Mustafa Khattab
+
 
 // --- API Response Types (Internal) ---
 interface ApiChapter {
@@ -62,8 +86,6 @@ interface VerseResponse {
     verse: ApiVerse;
 }
 
-// Removed ApiAudioFile and ApiAudioResponse as they are no longer used
-
 // --- End API Response Types ---
 
 
@@ -102,7 +124,7 @@ async function fetchData<T>(url: string): Promise<T> {
  * @returns A promise that resolves to an array of Surah objects.
  */
 export async function getSurahList(): Promise<Surah[]> {
-  // Fetch chapters with English language specified
+  // Fetch chapters with English language specified for metadata like translated name
   const data = await fetchData<ChaptersListResponse>(`${API_BASE_URL}/chapters?language=en`);
 
   // Map the API response to our Surah interface
@@ -147,20 +169,35 @@ export async function getSurahDetails(surahId: number): Promise<Surah> {
 
 
 /**
- * Retrieves a specific verse from a Surah, including its English translation and audio URL.
+ * Retrieves a specific verse from a Surah, including its translation and audio URL.
  *
  * @param surahId The ID (chapter number) of the Surah.
  * @param verseId The ID (verse number) of the verse.
- * @param reciterId The ID of the reciter for the audio (default: 7 for Mishary Rashid Alafasy).
+ * @param translationId The ID of the desired translation.
+ * @param reciterId The ID of the reciter for the audio.
  * @returns A promise that resolves to a Verse object.
  */
-export async function getVerse(surahId: number, verseId: number, reciterId: number = 7): Promise<Verse> {
+export async function getVerse(
+    surahId: number,
+    verseId: number,
+    translationId: number = DEFAULT_TRANSLATION_ID,
+    reciterId: number = DEFAULT_RECITER_ID
+): Promise<Verse> {
    if (isNaN(surahId) || surahId < 1 || surahId > 114 || isNaN(verseId) || verseId < 1) {
        throw new Error(`Invalid Surah or Verse ID: ${surahId}:${verseId}`);
    }
-  // Fetch the specific verse with fields for Arabic text, English translation (ID 131), and audio (reciter ID)
+    if (isNaN(translationId) || !availableTranslations.some(t => t.id === translationId)) {
+        console.warn(`Invalid or unavailable translationId ${translationId}, falling back to default ${DEFAULT_TRANSLATION_ID}`);
+        translationId = DEFAULT_TRANSLATION_ID;
+    }
+    if (isNaN(reciterId) || !availableReciters.some(r => r.id === reciterId)) {
+        console.warn(`Invalid or unavailable reciterId ${reciterId}, falling back to default ${DEFAULT_RECITER_ID}`);
+        reciterId = DEFAULT_RECITER_ID;
+    }
+
+  // Fetch the specific verse with fields for Arabic text, the specified translation, and audio
   const data = await fetchData<VerseResponse>(
-    `${API_BASE_URL}/verses/by_key/${surahId}:${verseId}?language=en&words=false&translations=131&fields=text_uthmani,audio&audio=${reciterId}`
+    `${API_BASE_URL}/verses/by_key/${surahId}:${verseId}?language=en&words=false&translations=${translationId}&fields=text_uthmani,audio&audio=${reciterId}`
   );
 
   const verseData = data.verse;
@@ -170,7 +207,9 @@ export async function getVerse(surahId: number, verseId: number, reciterId: numb
        throw new Error(`Verse ${surahId}:${verseId} not found or invalid response.`);
    }
 
-  const translationText = verseData.translations?.[0]?.text || 'Translation not available.';
+  // Find the specific translation from the response, fall back if not found
+  const translation = verseData.translations?.find(t => t.resource_id === translationId);
+  const translationText = translation?.text || 'Translation not available.';
 
   // Clean up HTML entities sometimes present in translations
   const cleanedTranslation = translationText.replace(/<[^>]*>?/gm, '');
@@ -182,6 +221,7 @@ export async function getVerse(surahId: number, verseId: number, reciterId: numb
     // Prepend base URL if the URL is relative (common case)
     audioUrl = relativeAudioUrl.startsWith('http') ? relativeAudioUrl : `${AUDIO_BASE_URL}${relativeAudioUrl}`;
   } else {
+    // Don't throw an error here, just log a warning. The VerseDisplay will handle it.
     console.warn(`Audio URL not found for verse ${verseData.verse_key} with reciter ${reciterId}.`);
   }
 
@@ -195,15 +235,16 @@ export async function getVerse(surahId: number, verseId: number, reciterId: numb
   };
 }
 
-// Removed getVerseAudioUrl function as its logic is now in getVerse
 
 /**
- * Retrieves a random verse from a Surah within a specified range.
+ * Retrieves a random verse from a Surah within a specified range, using selected settings.
  * Requires Surah details (verse count) to be known or fetched.
  *
  * @param surahId The ID of the Surah.
  * @param startVerse The starting verse number of the range (inclusive).
  * @param endVerse The ending verse number of the range (inclusive).
+ * @param translationId The ID of the desired translation.
+ * @param reciterId The ID of the reciter for the audio.
  * @param knownVerseCount Optional: Provide total verse count to potentially avoid fetching details.
  * @returns A promise that resolves to a Verse object.
  * @throws Error if the range is invalid or verse fetching fails.
@@ -212,6 +253,8 @@ export async function getRandomVerseInRange(
     surahId: number,
     startVerse: number,
     endVerse: number,
+    translationId: number = DEFAULT_TRANSLATION_ID,
+    reciterId: number = DEFAULT_RECITER_ID,
     knownVerseCount?: number
 ): Promise<Verse> {
     if (isNaN(surahId) || surahId < 1 || surahId > 114) {
@@ -243,10 +286,6 @@ export async function getRandomVerseInRange(
     const rangeSize = endVerse - startVerse + 1;
     const randomVerseId = Math.floor(Math.random() * rangeSize) + startVerse;
 
-    // Fetch the randomly selected verse using the existing getVerse function (which now includes audio)
-    return getVerse(surahId, randomVerseId);
+    // Fetch the randomly selected verse using the existing getVerse function
+    return getVerse(surahId, randomVerseId, translationId, reciterId);
 }
-
-// Note: The previous `getRandomVerse` function is removed as it's superseded by `getRandomVerseInRange` logic used in the random page.
-// If a simple random verse from the *entire* Surah is needed elsewhere, it can be called as:
-// getRandomVerseInRange(surahId, 1, surahDetails.verseCount, surahDetails.verseCount)
