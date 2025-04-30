@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { AlertCircle, ArrowRight } from 'lucide-react';
+import { AlertCircle, ArrowRight, Search } from 'lucide-react'; // Added Search icon
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 const LOCAL_STORAGE_KEY = 'quranExplorerConfig';
@@ -25,6 +25,7 @@ export default function ConfigurationPage() {
   const [selectedConfigs, setSelectedConfigs] = useState<SurahConfig[]>([]);
   const [isLoadingSurahs, setIsLoadingSurahs] = useState(true);
   const [errors, setErrors] = useState<Record<number, string>>({}); // Errors per Surah ID
+  const [searchQuery, setSearchQuery] = useState(''); // State for search query
   const { toast } = useToast();
   const router = useRouter();
 
@@ -73,6 +74,21 @@ export default function ConfigurationPage() {
     return new Map(allSurahs.map(s => [s.id, s]));
   }, [allSurahs]);
 
+  // Filter Surahs based on search query
+  const filteredSurahs = useMemo(() => {
+    if (!searchQuery) {
+      return allSurahs;
+    }
+    const lowerCaseQuery = searchQuery.toLowerCase();
+    return allSurahs.filter(surah =>
+      surah.id.toString().includes(lowerCaseQuery) ||
+      surah.name.toLowerCase().includes(lowerCaseQuery) ||
+      surah.transliteration.toLowerCase().includes(lowerCaseQuery) ||
+      surah.translatedName.toLowerCase().includes(lowerCaseQuery)
+    );
+  }, [allSurahs, searchQuery]);
+
+
   const validateRange = useCallback((surahId: number, start: number, end: number): string | null => {
     const surah = surahMap.get(surahId);
     if (!surah) return "Surah details not found.";
@@ -107,7 +123,7 @@ export default function ConfigurationPage() {
       if (config.surahId === surahId) {
         const updatedConfig = {
           ...config,
-          [type === 'start' ? 'startVerse' : 'endVerse']: isNaN(numValue) ? 1 : numValue, // Default to 1 if NaN
+          [type === 'start' ? 'startVerse' : 'endVerse']: isNaN(numValue) || numValue < 1 ? 1 : numValue, // Default to 1 if NaN or less than 1
         };
          // Perform validation after update
          const validationError = validateRange(surahId, updatedConfig.startVerse, updatedConfig.endVerse);
@@ -167,6 +183,11 @@ export default function ConfigurationPage() {
         <Skeleton className="h-5 w-1/2" />
       </CardHeader>
       <CardContent className="p-4 space-y-3">
+         {/* Add skeleton for search bar */}
+        <div className="relative mb-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5" />
+        </div>
         {[...Array(10)].map((_, i) => (
           <div key={i} className="flex items-center space-x-4 p-3 border rounded">
             <Skeleton className="h-5 w-5" />
@@ -194,72 +215,89 @@ export default function ConfigurationPage() {
             {isLoadingSurahs ? (
               renderLoadingState()
             ) : (
-              <ScrollArea className="h-[60vh] border-t border-b">
-                <div className="p-4 space-y-4">
-                  {allSurahs.map((surah) => {
-                    const isSelected = selectedSurahIds.has(surah.id);
-                    const config = isSelected ? selectedConfigs.find(c => c.surahId === surah.id) : null;
-                    const error = errors[surah.id];
+              <>
+                {/* Search Input */}
+                <div className="p-4 border-b relative">
+                  <Search className="absolute left-7 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder="Search Surahs by ID, Name, or Transliteration..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10" // Add padding for the icon
+                  />
+                </div>
+                <ScrollArea className="h-[55vh] border-b">
+                  <div className="p-4 space-y-4">
+                    {filteredSurahs.length > 0 ? (
+                      filteredSurahs.map((surah) => {
+                        const isSelected = selectedSurahIds.has(surah.id);
+                        const config = isSelected ? selectedConfigs.find(c => c.surahId === surah.id) : null;
+                        const error = errors[surah.id];
 
-                    return (
-                      <div key={surah.id} className={`p-4 border rounded-md ${isSelected ? 'bg-muted/30' : ''} ${error ? 'border-destructive' : ''}`}>
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-3">
-                            <Checkbox
-                              id={`surah-${surah.id}`}
-                              checked={isSelected}
-                              onCheckedChange={(checked) => handleSelectSurah(surah.id, !!checked)}
-                              aria-labelledby={`label-${surah.id}`}
-                            />
-                            <Label htmlFor={`surah-${surah.id}`} id={`label-${surah.id}`} className="cursor-pointer flex flex-col">
-                                <span className="font-medium">{surah.id}. {surah.name} ({surah.transliteration})</span>
-                                <span className="text-xs text-muted-foreground">{surah.verseCount} verses - {surah.revelationPlace}</span>
-                            </Label>
-                          </div>
-                         </div>
+                        return (
+                          <div key={surah.id} className={`p-4 border rounded-md ${isSelected ? 'bg-muted/30' : ''} ${error ? 'border-destructive' : ''}`}>
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <Checkbox
+                                  id={`surah-${surah.id}`}
+                                  checked={isSelected}
+                                  onCheckedChange={(checked) => handleSelectSurah(surah.id, !!checked)}
+                                  aria-labelledby={`label-${surah.id}`}
+                                />
+                                <Label htmlFor={`surah-${surah.id}`} id={`label-${surah.id}`} className="cursor-pointer flex flex-col">
+                                    <span className="font-medium">{surah.id}. {surah.name} ({surah.transliteration})</span>
+                                    <span className="text-xs text-muted-foreground">{surah.verseCount} verses - {surah.revelationPlace}</span>
+                                </Label>
+                              </div>
+                             </div>
 
-                        {isSelected && config && (
-                          <div className="mt-3 pl-8 space-y-3">
-                             <div className="flex items-center gap-4">
-                                <div className="flex-1 space-y-1">
-                                <Label htmlFor={`start-${surah.id}`}>Start Verse</Label>
-                                <Input
-                                    id={`start-${surah.id}`}
-                                    type="number"
-                                    min="1"
-                                    max={surah.verseCount}
-                                    value={config.startVerse}
-                                    onChange={(e) => handleRangeChange(surah.id, 'start', e.target.value)}
-                                    className={`h-9 ${error ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                                    aria-describedby={error ? `error-${surah.id}` : undefined}
-                                />
+                            {isSelected && config && (
+                              <div className="mt-3 pl-8 space-y-3">
+                                 <div className="flex items-center gap-4">
+                                    <div className="flex-1 space-y-1">
+                                    <Label htmlFor={`start-${surah.id}`}>Start Verse</Label>
+                                    <Input
+                                        id={`start-${surah.id}`}
+                                        type="number"
+                                        min="1"
+                                        max={surah.verseCount}
+                                        value={config.startVerse}
+                                        onChange={(e) => handleRangeChange(surah.id, 'start', e.target.value)}
+                                        className={`h-9 ${error ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                                        aria-describedby={error ? `error-${surah.id}` : undefined}
+                                    />
+                                    </div>
+                                    <div className="flex-1 space-y-1">
+                                    <Label htmlFor={`end-${surah.id}`}>End Verse</Label>
+                                    <Input
+                                        id={`end-${surah.id}`}
+                                        type="number"
+                                        min={config.startVerse} // Ensure end >= start
+                                        max={surah.verseCount}
+                                        value={config.endVerse}
+                                        onChange={(e) => handleRangeChange(surah.id, 'end', e.target.value)}
+                                         className={`h-9 ${error ? 'border-destructive focus-visible:ring-destructive' : ''}`}
+                                        aria-describedby={error ? `error-${surah.id}` : undefined}
+                                    />
+                                    </div>
                                 </div>
-                                <div className="flex-1 space-y-1">
-                                <Label htmlFor={`end-${surah.id}`}>End Verse</Label>
-                                <Input
-                                    id={`end-${surah.id}`}
-                                    type="number"
-                                    min="1"
-                                    max={surah.verseCount}
-                                    value={config.endVerse}
-                                    onChange={(e) => handleRangeChange(surah.id, 'end', e.target.value)}
-                                     className={`h-9 ${error ? 'border-destructive focus-visible:ring-destructive' : ''}`}
-                                    aria-describedby={error ? `error-${surah.id}` : undefined}
-                                />
-                                </div>
-                            </div>
-                            {error && (
-                                <p id={`error-${surah.id}`} className="text-xs text-destructive flex items-center gap-1">
-                                    <AlertCircle className="h-3 w-3"/> {error}
-                                </p>
+                                {error && (
+                                    <p id={`error-${surah.id}`} className="text-xs text-destructive flex items-center gap-1">
+                                        <AlertCircle className="h-3 w-3"/> {error}
+                                    </p>
+                                )}
+                              </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
+                        );
+                      })
+                    ) : (
+                      <p className="text-center text-muted-foreground py-6">No Surahs match your search.</p>
+                    )}
+                  </div>
+                </ScrollArea>
+              </>
             )}
           </CardContent>
            <CardFooter className="p-4 flex justify-end">
@@ -289,7 +327,7 @@ export default function ConfigurationPage() {
                             </div>
                         );
                     })}
-                    {Object.values(errors).some(e => e) && (
+                    {Object.values(errors).some(e => !!e) && ( // Check if there are any actual error messages
                         <Alert variant="destructive" className="mt-4">
                             <AlertCircle className="h-4 w-4" />
                             <AlertTitle>Configuration Errors</AlertTitle>
@@ -305,3 +343,5 @@ export default function ConfigurationPage() {
     </main>
   );
 }
+
+    
