@@ -54,6 +54,10 @@ export interface Verse {
    * The unique key for the verse (e.g., "1:1"). Used for API lookups like audio.
    */
   verseKey: string; // Using verse_key from API
+  /**
+   * The URL for the verse's audio recitation (optional).
+   */
+  audioUrl?: string;
 }
 
 /**

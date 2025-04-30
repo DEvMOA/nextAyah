@@ -6,7 +6,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Verse, Surah } from '@/services/quran';
-import { getVerseAudioUrl } from '@/services/quran';
+// Removed import for getVerseAudioUrl as it's no longer used
 import { ChevronLeft, ChevronRight, RefreshCw, Play, Pause, Volume2, VolumeX, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Slider } from '@/components/ui/slider';
@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'; // Import cn for conditional classes
 interface VerseDisplayProps {
   surah: Surah;
   currentVerse: Verse | null;
-  previousVerses: Verse[];
+  previousVerses: Verse[]; // Keep prop even if unused for potential future features
   onGenerateRandom: () => void;
   onNavigate: (direction: 'previous' | 'next') => void;
   rangeStart?: number;
@@ -34,12 +34,13 @@ export function VerseDisplay({
   const { toast } = useToast();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false); // Keep for potential initial load/buffering indication if needed
+  // Removed audioUrl state, use currentVerse.audioUrl directly
   const [volume, setVolume] = useState(0.7);
   const [isMuted, setIsMuted] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null); // State for playback errors
 
+  const audioUrl = currentVerse?.audioUrl; // Get audio URL directly from the verse object
 
   const canNavigatePrevious = currentVerse ? currentVerse.id > rangeStart : false;
   const canNavigateNext = currentVerse ? currentVerse.id < rangeEnd : false;
@@ -53,40 +54,85 @@ export function VerseDisplay({
     }
   }, []);
 
-
-  // Fetch audio URL when currentVerse changes
+  // Effect to handle changes in audioUrl (when currentVerse changes)
   useEffect(() => {
     stopAndResetAudio(); // Stop previous audio immediately
-    setAudioUrl(null); // Reset URL state
     setPlaybackError(null); // Clear previous errors
+    setIsLoadingAudio(false); // Reset loading state
 
-    if (currentVerse?.verseKey) {
-      setIsLoadingAudio(true);
-      getVerseAudioUrl(currentVerse.verseKey)
-        .then(url => {
-          setAudioUrl(url);
-          // Preload the audio metadata. Consider 'auto' if immediate playback is likely.
-          if (audioRef.current) {
-            audioRef.current.src = url;
+    if (audioUrl) {
+       // No need to fetch, just prepare the audio element
+       setIsLoadingAudio(true); // Show loading briefly while setting up
+       if (audioRef.current) {
+            // If element exists, update src and preload
+            audioRef.current.src = audioUrl;
             audioRef.current.preload = 'metadata';
-          }
-        })
-        .catch(error => {
-          console.error("Error fetching audio URL:", error);
-          const errorMessage = error instanceof Error ? error.message : 'Could not load audio.';
-          setPlaybackError(errorMessage); // Store error message
-          toast({
-            title: "Audio Unavailable",
-            description: errorMessage,
-            variant: "destructive",
-          });
-          setAudioUrl(null);
-        })
-        .finally(() => setIsLoadingAudio(false));
+             // Add load listener to turn off loading indicator
+            const handleLoadedMetadata = () => setIsLoadingAudio(false);
+            audioRef.current.addEventListener('loadedmetadata', handleLoadedMetadata);
+            // Add error listener within this effect
+            const handleError = (e: Event) => {
+                console.error("Audio element error:", e);
+                const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
+                setPlaybackError(`Audio Error: ${errorMsg}`);
+                setIsPlaying(false); // Stop trying to play on error
+                setIsLoadingAudio(false);
+                toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
+            };
+            audioRef.current.addEventListener('error', handleError);
+
+            return () => {
+                 // Cleanup listeners
+                if (audioRef.current){
+                    audioRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    audioRef.current.removeEventListener('error', handleError);
+                }
+            }
+       } else {
+           // If element doesn't exist, create it
+            const newAudio = new Audio(audioUrl);
+            newAudio.volume = isMuted ? 0 : volume;
+            newAudio.muted = isMuted;
+            newAudio.preload = 'metadata';
+            newAudio.addEventListener('ended', handleAudioEnded);
+
+             const handleLoadedMetadata = () => setIsLoadingAudio(false);
+             newAudio.addEventListener('loadedmetadata', handleLoadedMetadata);
+
+            const handleError = (e: Event) => {
+                console.error("Audio element error:", e);
+                const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
+                setPlaybackError(`Audio Error: ${errorMsg}`);
+                setIsPlaying(false); // Stop trying to play on error
+                 setIsLoadingAudio(false);
+                toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
+            };
+            newAudio.addEventListener('error', handleError);
+
+            audioRef.current = newAudio;
+
+             return () => {
+                 // Cleanup listeners
+                if(newAudio){ // Use the created instance in cleanup
+                    newAudio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    newAudio.removeEventListener('ended', handleAudioEnded);
+                    newAudio.removeEventListener('error', handleError);
+                }
+             }
+       }
+    } else if (!audioUrl && audioRef.current) {
+        // If verse changes to one without audio, cleanup
+        stopAndResetAudio();
+         // Remove listeners if they were attached
+         audioRef.current.removeEventListener('ended', handleAudioEnded);
+         // Consider removing error listener if it was attached elsewhere or robustly
+        audioRef.current = null; // Allow GC
     } else {
-      setIsLoadingAudio(false); // No verse, so not loading
+        // No audioUrl and no audio element, ensure loading is false
+        setIsLoadingAudio(false);
     }
-  }, [currentVerse, toast, stopAndResetAudio]); // Include stopAndResetAudio
+
+  }, [audioUrl, stopAndResetAudio, isMuted, volume, toast]); // Dependencies updated
 
 
   // Audio ended event handler
@@ -97,60 +143,26 @@ export function VerseDisplay({
     }
   }, []);
 
-  // Setup audio element and event listeners
+  // Setup audio element volume/mute state and add/remove 'ended' listener based on audioRef.current existence
   useEffect(() => {
-    let currentAudio = audioRef.current; // Capture ref value
+    const currentAudio = audioRef.current; // Capture ref value
 
-    if (audioUrl && !currentAudio) {
-      // Create audio element only if it doesn't exist and URL is available
-      const newAudio = new Audio(audioUrl);
-      newAudio.volume = isMuted ? 0 : volume;
-      newAudio.muted = isMuted;
-      newAudio.preload = 'metadata'; // Preload metadata
-      newAudio.addEventListener('ended', handleAudioEnded);
-       newAudio.addEventListener('error', (e) => {
-            console.error("Audio element error:", e);
-            const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
-            setPlaybackError(`Audio Error: ${errorMsg}`);
-            setIsPlaying(false); // Stop trying to play on error
-            toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
-        });
-      audioRef.current = newAudio;
-      currentAudio = newAudio; // Update local variable
-    } else if (audioUrl && currentAudio && currentAudio.src !== audioUrl) {
-      // If element exists but URL changed, update src and reset state
-      currentAudio.src = audioUrl;
-      currentAudio.preload = 'metadata'; // Ensure preload is set
-      stopAndResetAudio(); // Reset playback state
-      // Ensure listeners are attached (remove old, add new)
-      currentAudio.removeEventListener('ended', handleAudioEnded);
-      currentAudio.addEventListener('ended', handleAudioEnded);
-      // Consider re-attaching error listener if needed
-    } else if (!audioUrl && currentAudio) {
-       // If URL becomes null, clean up
-       stopAndResetAudio();
-       currentAudio.removeEventListener('ended', handleAudioEnded);
-       currentAudio.removeEventListener('error', () => {}); // Remove error listener
-       audioRef.current = null; // Allow GC
-    }
-
-    // Update volume and mute state if element exists
     if (currentAudio) {
+        // Update volume and mute state
         currentAudio.volume = volume;
         currentAudio.muted = isMuted;
+
+        // Add ended listener
+        currentAudio.addEventListener('ended', handleAudioEnded);
     }
 
-
-    // Cleanup function
+    // Cleanup function to remove the ended listener
     return () => {
-      const audio = audioRef.current; // Use ref directly in cleanup
-      if (audio) {
-        // Don't pause here necessarily, let the next effect handle it or unmount do it
-        audio.removeEventListener('ended', handleAudioEnded);
-        audio.removeEventListener('error', () => {}); // Clean up error listener too
+      if (currentAudio) {
+        currentAudio.removeEventListener('ended', handleAudioEnded);
       }
     };
-  }, [audioUrl, volume, isMuted, handleAudioEnded, stopAndResetAudio, toast]); // Added dependencies
+  }, [volume, isMuted, handleAudioEnded]); // Only depend on state affecting the audio element directly and the handler
 
 
  const togglePlayPause = useCallback(() => {
@@ -229,11 +241,11 @@ export function VerseDisplay({
                 // Add cursor pointer only when audio is available and not errored
                 audioUrl && !playbackError && !isLoadingAudio ? "cursor-pointer hover:bg-muted/50 transition-colors" : ""
             )}
-            onClick={audioUrl && !playbackError ? togglePlayPause : undefined} // Make text clickable for play/pause
+            onClick={audioUrl && !playbackError && !isLoadingAudio ? togglePlayPause : undefined} // Make text clickable for play/pause, check loading state
              role={audioUrl && !playbackError ? "button" : undefined}
              aria-label={audioUrl && !playbackError ? (isPlaying ? "Pause verse audio" : "Play verse audio") : undefined}
              tabIndex={audioUrl && !playbackError ? 0 : -1} // Make it focusable if clickable
-             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { togglePlayPause(); e.preventDefault(); }}} // Keyboard accessibility
+             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { audioUrl && !playbackError && !isLoadingAudio && togglePlayPause(); e.preventDefault(); }}} // Keyboard accessibility, check loading state
           >
             <p lang="ar" dir="rtl" className="text-2xl font-medium text-right mb-2">{currentVerse.arabicText}</p>
             <p className="text-lg italic">"{currentVerse.translation}"</p>
@@ -273,6 +285,9 @@ export function VerseDisplay({
              {playbackError && (
                 <p className="text-xs text-destructive text-center mt-2">{playbackError}</p>
             )}
+              {!audioUrl && !isLoadingAudio && !playbackError && ( // Show message if audio is definitively unavailable
+                <p className="text-xs text-muted-foreground text-center mt-2">Audio not available for this verse/reciter.</p>
+             )}
           </div>
         ) : (
           <p className="text-center text-muted-foreground py-10">Click "Generate Random Verse" to display a verse.</p>
@@ -302,5 +317,3 @@ export function VerseDisplay({
     </Card>
   );
 }
-
-    

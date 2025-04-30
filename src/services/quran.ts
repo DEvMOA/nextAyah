@@ -3,6 +3,7 @@
 import type { Surah, Verse } from '@/types/quran'; // Import types
 
 const API_BASE_URL = 'https://api.quran.com/api/v4';
+const AUDIO_BASE_URL = 'https://verses.quran.com/'; // Base URL for audio files
 
 // --- API Response Types (Internal) ---
 interface ApiChapter {
@@ -29,6 +30,11 @@ interface ApiVerseTranslation {
     resource_id: number;
 }
 
+interface ApiVerseAudio {
+    url: string | null; // URL can be null if audio is not available
+    segments: unknown[]; // Type according to actual data if needed
+}
+
 interface ApiVerse {
     id: number;
     verse_number: number;
@@ -41,6 +47,7 @@ interface ApiVerse {
     page_number: number;
     text_uthmani: string;
     translations: ApiVerseTranslation[];
+    audio?: ApiVerseAudio; // Make audio optional
 }
 
 interface ChaptersListResponse {
@@ -55,19 +62,7 @@ interface VerseResponse {
     verse: ApiVerse;
 }
 
-interface ApiAudioFile {
-    id: number;
-    chapter_id: number;
-    file_size: number;
-    format: string;
-    audio_url: string; // Changed from url to audio_url based on potential API structure
-    duration: number;
-    verse_timings: unknown[]; // Type according to actual data if needed
-}
-
-interface ApiAudioResponse {
-    audio_files: ApiAudioFile[];
-}
+// Removed ApiAudioFile and ApiAudioResponse as they are no longer used
 
 // --- End API Response Types ---
 
@@ -152,19 +147,20 @@ export async function getSurahDetails(surahId: number): Promise<Surah> {
 
 
 /**
- * Retrieves a specific verse from a Surah, including its English translation.
+ * Retrieves a specific verse from a Surah, including its English translation and audio URL.
  *
  * @param surahId The ID (chapter number) of the Surah.
  * @param verseId The ID (verse number) of the verse.
+ * @param reciterId The ID of the reciter for the audio (default: 7 for Mishary Rashid Alafasy).
  * @returns A promise that resolves to a Verse object.
  */
-export async function getVerse(surahId: number, verseId: number): Promise<Verse> {
+export async function getVerse(surahId: number, verseId: number, reciterId: number = 7): Promise<Verse> {
    if (isNaN(surahId) || surahId < 1 || surahId > 114 || isNaN(verseId) || verseId < 1) {
        throw new Error(`Invalid Surah or Verse ID: ${surahId}:${verseId}`);
    }
-  // Fetch the specific verse with fields for Arabic text and English translation (ID 131 for Saheeh International)
+  // Fetch the specific verse with fields for Arabic text, English translation (ID 131), and audio (reciter ID)
   const data = await fetchData<VerseResponse>(
-    `${API_BASE_URL}/verses/by_key/${surahId}:${verseId}?language=en&words=false&translations=131&fields=text_uthmani`
+    `${API_BASE_URL}/verses/by_key/${surahId}:${verseId}?language=en&words=false&translations=131&fields=text_uthmani,audio&audio=${reciterId}`
   );
 
   const verseData = data.verse;
@@ -179,46 +175,27 @@ export async function getVerse(surahId: number, verseId: number): Promise<Verse>
   // Clean up HTML entities sometimes present in translations
   const cleanedTranslation = translationText.replace(/<[^>]*>?/gm, '');
 
+  // Construct audio URL if available
+  let audioUrl: string | undefined = undefined;
+  const relativeAudioUrl = verseData.audio?.url; // Use optional chaining
+  if (relativeAudioUrl) {
+    // Prepend base URL if the URL is relative (common case)
+    audioUrl = relativeAudioUrl.startsWith('http') ? relativeAudioUrl : `${AUDIO_BASE_URL}${relativeAudioUrl}`;
+  } else {
+    console.warn(`Audio URL not found for verse ${verseData.verse_key} with reciter ${reciterId}.`);
+  }
+
   return {
     id: verseData.verse_number,
     arabicText: verseData.text_uthmani,
     translation: cleanedTranslation,
     surahId: surahId, // Use the input surahId
-    verseKey: verseData.verse_key, // Add verse_key for audio lookup
+    verseKey: verseData.verse_key,
+    audioUrl: audioUrl, // Add the potentially undefined audio URL
   };
 }
 
-/**
- * Retrieves the audio URL for a specific verse by a specific reciter.
- *
- * @param verseKey The verse key (e.g., "1:1").
- * @param reciterId The ID of the reciter (default: 7 for Mishary Rashid Alafasy).
- * @returns A promise that resolves to the audio URL string.
- * @throws Error if audio cannot be found or fetched.
- */
-export async function getVerseAudioUrl(verseKey: string, reciterId: number = 7): Promise<string> {
-    if (!verseKey || !verseKey.includes(':')) {
-        throw new Error(`Invalid verse key for audio lookup: ${verseKey}`);
-    }
-    const data = await fetchData<ApiAudioResponse>(
-        `${API_BASE_URL}/recitations/${reciterId}/by_ayah/${verseKey}` // Changed endpoint based on common patterns
-    );
-
-    const audioFile = data.audio_files?.[0];
-
-    if (!audioFile || !audioFile.audio_url) {
-        throw new Error(`Audio not found for verse ${verseKey} by reciter ${reciterId}.`);
-    }
-
-    // The API might return a relative URL, prepend base if needed (adjust base as necessary)
-    // Example: If audio_url is /wbw/001_001_001.mp3, prepend https://verses.quran.com/
-    // Based on inspection, quran.com seems to use this base for audio.
-    const audioBaseUrl = 'https://verses.quran.com/';
-    return audioFile.audio_url.startsWith('/')
-        ? `${audioBaseUrl}${audioFile.audio_url.substring(1)}`
-        : audioFile.audio_url;
-}
-
+// Removed getVerseAudioUrl function as its logic is now in getVerse
 
 /**
  * Retrieves a random verse from a Surah within a specified range.
@@ -266,7 +243,7 @@ export async function getRandomVerseInRange(
     const rangeSize = endVerse - startVerse + 1;
     const randomVerseId = Math.floor(Math.random() * rangeSize) + startVerse;
 
-    // Fetch the randomly selected verse using the existing getVerse function
+    // Fetch the randomly selected verse using the existing getVerse function (which now includes audio)
     return getVerse(surahId, randomVerseId);
 }
 
