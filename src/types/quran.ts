@@ -50,6 +50,10 @@ export interface Verse {
    * The Surah ID this verse belongs to.
    */
   surahId: number;
+   /**
+   * The unique key for the verse (e.g., "1:1"). Used for API lookups like audio.
+   */
+  verseKey: string; // Using verse_key from API
 }
 
 /**

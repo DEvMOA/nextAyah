@@ -54,6 +54,21 @@ interface ChapterResponse {
 interface VerseResponse {
     verse: ApiVerse;
 }
+
+interface ApiAudioFile {
+    id: number;
+    chapter_id: number;
+    file_size: number;
+    format: string;
+    audio_url: string; // Changed from url to audio_url based on potential API structure
+    duration: number;
+    verse_timings: unknown[]; // Type according to actual data if needed
+}
+
+interface ApiAudioResponse {
+    audio_files: ApiAudioFile[];
+}
+
 // --- End API Response Types ---
 
 
@@ -169,7 +184,39 @@ export async function getVerse(surahId: number, verseId: number): Promise<Verse>
     arabicText: verseData.text_uthmani,
     translation: cleanedTranslation,
     surahId: surahId, // Use the input surahId
+    verseKey: verseData.verse_key, // Add verse_key for audio lookup
   };
+}
+
+/**
+ * Retrieves the audio URL for a specific verse by a specific reciter.
+ *
+ * @param verseKey The verse key (e.g., "1:1").
+ * @param reciterId The ID of the reciter (default: 7 for Mishary Rashid Alafasy).
+ * @returns A promise that resolves to the audio URL string.
+ * @throws Error if audio cannot be found or fetched.
+ */
+export async function getVerseAudioUrl(verseKey: string, reciterId: number = 7): Promise<string> {
+    if (!verseKey || !verseKey.includes(':')) {
+        throw new Error(`Invalid verse key for audio lookup: ${verseKey}`);
+    }
+    const data = await fetchData<ApiAudioResponse>(
+        `${API_BASE_URL}/recitations/${reciterId}/by_ayah/${verseKey}` // Changed endpoint based on common patterns
+    );
+
+    const audioFile = data.audio_files?.[0];
+
+    if (!audioFile || !audioFile.audio_url) {
+        throw new Error(`Audio not found for verse ${verseKey} by reciter ${reciterId}.`);
+    }
+
+    // The API might return a relative URL, prepend base if needed (adjust base as necessary)
+    // Example: If audio_url is /wbw/001_001_001.mp3, prepend https://verses.quran.com/
+    // Based on inspection, quran.com seems to use this base for audio.
+    const audioBaseUrl = 'https://verses.quran.com/';
+    return audioFile.audio_url.startsWith('/')
+        ? `${audioBaseUrl}${audioFile.audio_url.substring(1)}`
+        : audioFile.audio_url;
 }
 
 
