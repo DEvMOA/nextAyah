@@ -22,8 +22,8 @@ export const DEFAULT_RECITER_ID = 7; // Mishary Rashid Alafasy
 export const availableTranslations: TranslationInfo[] = [
     { id: 131, language: "English", name: "Dr. Mustafa Khattab, the Clear Quran", author: "Dr. Mustafa Khattab" },
     { id: 20, language: "English", name: "Saheeh International", author: "Saheeh International" },
-    { id: 68, language: "French", name: "Le Noble Coran (Muhammad Hamidullah)", author: "Muhammad Hamidullah" },
-    { id: 33, language: "French", name: "Hamidullah", author: "Muhammad Hamidullah" }, // Another French option if needed
+    // { id: 68, language: "French", name: "Le Noble Coran (Muhammad Hamidullah)", author: "Muhammad Hamidullah" }, // Removed as potentially non-functional
+    { id: 33, language: "French", name: "Hamidullah", author: "Muhammad Hamidullah" }, // Keep this Hamidullah French option
     // Add more as desired
 ];
 export const DEFAULT_TRANSLATION_ID = 131; // Dr. Mustafa Khattab
@@ -222,6 +222,7 @@ export async function getVerse(
     audioUrl = relativeAudioUrl.startsWith('http') ? relativeAudioUrl : `${AUDIO_BASE_URL}${relativeAudioUrl}`;
   } else {
     // Don't throw an error here, just log a warning. The VerseDisplay will handle it.
+    // This avoids breaking the UI if just one verse audio is missing.
     console.warn(`Audio URL not found for verse ${verseData.verse_key} with reciter ${reciterId}.`);
   }
 
