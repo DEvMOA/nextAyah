@@ -1,58 +1,61 @@
 // src/services/quran.ts
 
+import type { Surah, Verse } from '@/types/quran'; // Import types
+
 const API_BASE_URL = 'https://api.quran.com/api/v4';
 
-/**
- * Represents a Surah (chapter) in the Quran.
- */
-export interface Surah {
-  /**
-   * The ID (chapter number) of the Surah.
-   */
+// --- API Response Types (Internal) ---
+interface ApiChapter {
   id: number;
-  /**
-   * The Arabic name of the Surah.
-   */
-  name: string; // Using name_arabic from API
-  /**
-   * The number of verses in the Surah.
-   */
-  verseCount: number; // Using verses_count from API
-  /**
-   * The transliteration of the Surah name.
-   */
-  transliteration: string; // Using name_simple from API
-  /**
-   * The revelation place (Makkah or Madinah).
-   */
-   revelationPlace: string; // Using revelation_place from API
-   /**
-    * The translated name of the Surah.
-    */
-   translatedName: string; // Using translated_name.name from API
+  revelation_place: string;
+  revelation_order: number;
+  bismillah_pre: boolean;
+  name_simple: string;
+  name_complex: string;
+  name_arabic: string;
+  verses_count: number;
+  pages: [number, number];
+  translated_name: {
+    language_name: string;
+    name: string;
+  };
 }
 
-/**
- * Represents a verse from the Quran.
- */
-export interface Verse {
-  /**
-   * The ID (verse number within the Surah) of the verse.
-   */
-  id: number; // Using verse_number from API
-  /**
-   * The text of the verse in Arabic (Uthmani script).
-   */
-  arabicText: string; // Using text_uthmani from API
-  /**
-   * The translation of the verse (defaulting to English).
-   */
-  translation: string; // Using translations[0].text (assuming English is the first)
-  /**
-   * The Surah ID this verse belongs to.
-   */
-  surahId: number;
+interface ApiVerseTranslation {
+    id: number;
+    language_name: string;
+    text: string;
+    resource_name: string | null;
+    resource_id: number;
 }
+
+interface ApiVerse {
+    id: number;
+    verse_number: number;
+    verse_key: string;
+    juz_number: number;
+    hizb_number: number;
+    rub_el_hizb_number: number;
+    ruku_number: number;
+    manzil_number: number;
+    page_number: number;
+    text_uthmani: string;
+    translations: ApiVerseTranslation[];
+}
+
+interface ChaptersListResponse {
+    chapters: ApiChapter[];
+}
+
+interface ChapterResponse {
+    chapter: ApiChapter;
+}
+
+interface VerseResponse {
+    verse: ApiVerse;
+}
+// --- End API Response Types ---
+
 
 // Helper function to fetch data with error handling
 async function fetchData<T>(url: string): Promise<T> {
@@ -90,10 +93,10 @@ async function fetchData<T>(url: string): Promise<T> {
  */
 export async function getSurahList(): Promise<Surah[]> {
   // Fetch chapters with English language specified
-  const data = await fetchData<{ chapters: any[] }>(`${API_BASE_URL}/chapters?language=en`);
+  const data = await fetchData<ChaptersListResponse>(`${API_BASE_URL}/chapters?language=en`);
 
   // Map the API response to our Surah interface
-  return data.chapters.map((chapter: any): Surah => ({
+  return data.chapters.map((chapter: ApiChapter): Surah => ({
     id: chapter.id,
     name: chapter.name_arabic,
     verseCount: chapter.verses_count,
@@ -113,8 +116,14 @@ export async function getSurahDetails(surahId: number): Promise<Surah> {
   if (isNaN(surahId) || surahId < 1 || surahId > 114) {
       throw new Error(`Invalid Surah ID: ${surahId}`);
   }
-  const data = await fetchData<{ chapter: any }>(`${API_BASE_URL}/chapters/${surahId}?language=en`);
+  const data = await fetchData<ChapterResponse>(`${API_BASE_URL}/chapters/${surahId}?language=en`);
   const chapter = data.chapter;
+
+  // Add validation in case API returns unexpected empty object for a valid ID
+  if (!chapter || !chapter.id) {
+    throw new Error(`Could not find details for Surah ${surahId}.`);
+  }
+
 
   return {
     id: chapter.id,
@@ -139,14 +148,14 @@ export async function getVerse(surahId: number, verseId: number): Promise<Verse>
        throw new Error(`Invalid Surah or Verse ID: ${surahId}:${verseId}`);
    }
   // Fetch the specific verse with fields for Arabic text and English translation (ID 131 for Saheeh International)
-  const data = await fetchData<{ verse: any }>(
+  const data = await fetchData<VerseResponse>(
     `${API_BASE_URL}/verses/by_key/${surahId}:${verseId}?language=en&words=false&translations=131&fields=text_uthmani`
   );
 
   const verseData = data.verse;
 
    // Basic validation in case the API returns unexpected data for a valid-looking key
-   if (!verseData || !verseData.verse_number) {
+   if (!verseData || !verseData.verse_number || verseData.verse_number !== verseId) {
        throw new Error(`Verse ${surahId}:${verseId} not found or invalid response.`);
    }
 
@@ -165,38 +174,55 @@ export async function getVerse(surahId: number, verseId: number): Promise<Verse>
 
 
 /**
- * Retrieves a random verse from a Surah.
- * Fetches Surah details first if needed to get verse count.
+ * Retrieves a random verse from a Surah within a specified range.
+ * Requires Surah details (verse count) to be known or fetched.
  *
  * @param surahId The ID of the Surah.
- * @param knownVerseCount Optional: Provide verse count to avoid an extra API call.
+ * @param startVerse The starting verse number of the range (inclusive).
+ * @param endVerse The ending verse number of the range (inclusive).
+ * @param knownVerseCount Optional: Provide total verse count to potentially avoid fetching details.
  * @returns A promise that resolves to a Verse object.
+ * @throws Error if the range is invalid or verse fetching fails.
  */
-export async function getRandomVerse(surahId: number, knownVerseCount?: number): Promise<Verse> {
-     if (isNaN(surahId) || surahId < 1 || surahId > 114) {
-         throw new Error(`Invalid Surah ID for random verse: ${surahId}`);
-     }
+export async function getRandomVerseInRange(
+    surahId: number,
+    startVerse: number,
+    endVerse: number,
+    knownVerseCount?: number
+): Promise<Verse> {
+    if (isNaN(surahId) || surahId < 1 || surahId > 114) {
+        throw new Error(`Invalid Surah ID for random verse: ${surahId}`);
+    }
+    if (isNaN(startVerse) || isNaN(endVerse) || startVerse < 1 || endVerse < 1 || startVerse > endVerse) {
+         throw new Error(`Invalid verse range: ${startVerse}-${endVerse}`);
+    }
+
     let verseCount = knownVerseCount;
 
-    // If verse count isn't provided, fetch the Surah details first
-    if (verseCount === undefined || verseCount <= 0) { // Check if verseCount is invalid too
+    // If verse count isn't provided or might be outdated, fetch the Surah details
+    if (verseCount === undefined || verseCount <= 0) {
         try {
-            // Use getSurahDetails which includes validation
-            const surahInfo = await getSurahDetails(surahId);
+            const surahInfo = await getSurahDetails(surahId); // This includes validation
             verseCount = surahInfo.verseCount;
         } catch (error) {
             console.error(`Error fetching surah info for random verse (Surah ${surahId}):`, error);
-             throw new Error(`Could not determine verse count for Surah ${surahId}`);
+            throw new Error(`Could not determine verse count for Surah ${surahId}`);
         }
     }
 
-    if (!verseCount || verseCount <= 0) { // Final check
-         throw new Error(`Invalid verse count (${verseCount}) for Surah ${surahId}`);
-    }
+     // Validate the provided range against the actual verse count
+     if (startVerse > verseCount || endVerse > verseCount) {
+         throw new Error(`Range ${startVerse}-${endVerse} exceeds max verses (${verseCount}) for Surah ${surahId}`);
+     }
 
-    // Generate a random verse number (1-based index)
-    const randomVerseId = Math.floor(Math.random() * verseCount) + 1;
+    // Generate a random verse number *within the specified range*
+    const rangeSize = endVerse - startVerse + 1;
+    const randomVerseId = Math.floor(Math.random() * rangeSize) + startVerse;
 
-    // Fetch the randomly selected verse
+    // Fetch the randomly selected verse using the existing getVerse function
     return getVerse(surahId, randomVerseId);
 }
+
+// Note: The previous `getRandomVerse` function is removed as it's superseded by `getRandomVerseInRange` logic used in the random page.
+// If a simple random verse from the *entire* Surah is needed elsewhere, it can be called as:
+// getRandomVerseInRange(surahId, 1, surahDetails.verseCount, surahDetails.verseCount)

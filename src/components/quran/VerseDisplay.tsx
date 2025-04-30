@@ -14,6 +14,8 @@ interface VerseDisplayProps {
   previousVerses: Verse[];
   onGenerateRandom: () => void;
   onNavigate: (direction: 'previous' | 'next') => void;
+  rangeStart?: number; // Optional: Start of the allowed verse range
+  rangeEnd?: number;   // Optional: End of the allowed verse range
 }
 
 export function VerseDisplay({
@@ -22,25 +24,34 @@ export function VerseDisplay({
   previousVerses,
   onGenerateRandom,
   onNavigate,
+  rangeStart = 1, // Default to full Surah range if not provided
+  rangeEnd = surah.verseCount, // Default to full Surah range if not provided
 }: VerseDisplayProps) {
 
-  const canNavigatePrevious = currentVerse ? currentVerse.id > 1 : false;
-  const canNavigateNext = currentVerse ? currentVerse.id < surah.verseCount : false;
+  // Determine navigation bounds based on the provided range
+  const canNavigatePrevious = currentVerse ? currentVerse.id > rangeStart : false;
+  const canNavigateNext = currentVerse ? currentVerse.id < rangeEnd : false;
+
 
   return (
     <Card className="w-full shadow-lg">
       <CardHeader className="border-b">
         <CardTitle className="text-xl font-semibold">{surah.name} ({surah.transliteration})</CardTitle>
-        <CardDescription>{surah.verseCount} verses</CardDescription>
+        {/* Display the specific range being used */}
+        <CardDescription>
+             Verses {rangeStart} - {rangeEnd} (of {surah.verseCount})
+        </CardDescription>
       </CardHeader>
       <CardContent className="p-6 space-y-6">
         {previousVerses.length > 0 && (
           <div>
-            <h3 className="text-md font-medium mb-2 text-muted-foreground">Previous Verses:</h3>
-            <ScrollArea className="h-40 border rounded-md p-4 bg-secondary/50">
+            <h3 className="text-md font-medium mb-2 text-muted-foreground">Previous Verses (in this session):</h3>
+            {/* Consider making scroll area height dynamic or larger */}
+            <ScrollArea className="h-48 border rounded-md p-4 bg-secondary/50">
               <div className="space-y-4">
-                {previousVerses.map((verse) => (
-                  <div key={verse.id} className="text-sm border-b pb-2 last:border-b-0">
+                {/* Ensure previous verses are sorted chronologically */}
+                {previousVerses.sort((a, b) => a.id - b.id).map((verse) => (
+                  <div key={`${verse.surahId}-${verse.id}`} className="text-sm border-b pb-2 last:border-b-0">
                      <p lang="ar" dir="rtl" className="text-lg mb-1 text-right">{verse.arabicText}</p>
                      <p className="text-muted-foreground italic">"{verse.translation}"</p>
                      <p className="text-xs text-muted-foreground mt-1">({surah.transliteration} {surah.id}:{verse.id})</p>
@@ -57,7 +68,7 @@ export function VerseDisplay({
             <p className="text-sm text-muted-foreground">({surah.transliteration} {surah.id}:{currentVerse.id})</p>
           </div>
         ) : (
-          <p className="text-center text-muted-foreground">Click "Generate Random Verse" to start.</p>
+          <p className="text-center text-muted-foreground py-10">Click "Generate Random Verse" to display a verse.</p>
         )}
       </CardContent>
       <CardFooter className="flex justify-between items-center border-t pt-4">
@@ -70,7 +81,7 @@ export function VerseDisplay({
           <ChevronLeft className="h-4 w-4 mr-2" /> Previous
         </Button>
         <Button onClick={onGenerateRandom} variant="secondary" aria-label="Generate Random Verse">
-           <RefreshCw className="h-4 w-4 mr-2" /> Random Verse
+           <RefreshCw className="h-4 w-4 mr-2" /> New Random Verse
         </Button>
         <Button
           variant="outline"
