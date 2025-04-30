@@ -6,10 +6,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Verse, Surah } from '@/services/quran';
-import { ChevronLeft, ChevronRight, RefreshCw, Play, Pause, Volume2, VolumeX, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, Play, Pause, Volume2, VolumeX, Loader2, AlertTriangle } from 'lucide-react'; // Added AlertTriangle
 import { useToast } from '@/hooks/use-toast';
 import { Slider } from '@/components/ui/slider';
 import { cn } from '@/lib/utils'; // Import cn for conditional classes
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Import Alert components
 
 interface VerseDisplayProps {
   surah: Surah;
@@ -82,18 +83,46 @@ export function VerseDisplay({
 
        // Event listeners
        const handleLoadedMetadata = () => setIsLoadingAudio(false);
-       const handleError = (e: Event) => {
-           console.error("Audio element error:", e);
-           const errorMsg = (e.target as HTMLAudioElement)?.error?.message || "Unknown audio error";
-           setPlaybackError(`Audio Error: ${errorMsg}`);
+       const handleError = (e: Event | string) => { // Can receive Event or string
+            const audioEl = audioRef.current; // Use the ref which should be the target
+            let errorMsg = "Unknown audio error";
+            let errorCode: number | string = 'N/A';
+
+            console.error("Audio element error event:", e); // Log the raw event/string
+
+            if (audioEl && audioEl.error) {
+                 console.error("Audio error code:", audioEl.error.code);
+                 console.error("Audio error message:", audioEl.error.message);
+                 errorCode = audioEl.error.code;
+                 errorMsg = audioEl.error.message || errorMsg; // Prefer message from error object
+            } else if (typeof e === 'string') {
+                 // Handle cases where the error might be passed as a string (less common)
+                 errorMsg = e;
+            }
+
+           const detailedErrorMsg = `Audio Error (${errorCode}): ${errorMsg}`;
+           setPlaybackError(detailedErrorMsg);
            setIsPlaying(false);
            setIsLoadingAudio(false);
-           toast({ title: "Audio Playback Error", description: errorMsg, variant: "destructive"});
+           toast({ title: "Audio Playback Error", description: detailedErrorMsg, variant: "destructive"});
        };
+
 
        newAudio.addEventListener('loadedmetadata', handleLoadedMetadata);
        newAudio.addEventListener('ended', handleAudioEnded); // Use the stable callback
-       newAudio.addEventListener('error', handleError);
+       newAudio.addEventListener('error', handleError); // Attach error handler
+
+       // Sometimes errors happen before 'error' event (e.g., 404)
+       // Try to catch network errors during load initiation
+       newAudio.load(); // Explicitly call load (though constructor/setting src usually does this)
+        newAudio.addEventListener('stalled', () => {
+             console.warn("Audio stalled"); // May indicate network issues
+             // Optionally set loading state or provide feedback
+        });
+         newAudio.addEventListener('suspend', () => {
+             console.warn("Audio suspended"); // Loading suspended by browser
+        });
+
 
        // Cleanup function
        return () => {
@@ -102,6 +131,13 @@ export function VerseDisplay({
                 newAudio.removeEventListener('loadedmetadata', handleLoadedMetadata);
                 newAudio.removeEventListener('ended', handleAudioEnded);
                 newAudio.removeEventListener('error', handleError);
+                newAudio.removeEventListener('stalled', () => console.warn("Audio stalled listener removed"));
+                newAudio.removeEventListener('suspend', () => console.warn("Audio suspend listener removed"));
+
+                // Explicitly remove src to potentially help stop network activity
+                newAudio.src = '';
+                // eslint-disable-next-line @typescript-eslint/no-empty-function
+                newAudio.onerror = () => {}; // Prevent late errors after cleanup
            }
            audioRef.current = null; // Help with garbage collection
        };
@@ -142,15 +178,26 @@ export function VerseDisplay({
         if (audio.currentTime === audio.duration || audio.currentTime === 0) {
             audio.currentTime = 0;
         }
+        setPlaybackError(null); // Optimistically clear previous error
+        setIsLoadingAudio(true); // Show loading while play() is resolving
+
         audio.play().then(() => {
             setIsPlaying(true);
-            setPlaybackError(null); // Clear error on successful play
+            setIsLoadingAudio(false); // Stop loading on successful play start
         }).catch(error => {
+             const audioEl = audioRef.current;
             console.error("Error playing audio:", error);
-            const errorMsg = error instanceof Error ? error.message : "Could not play audio.";
-            setPlaybackError(errorMsg);
-            toast({ title: "Playback Error", description: errorMsg, variant: "destructive" });
+             let errorMsg = error instanceof Error ? error.message : "Could not play audio.";
+             let errorCode: number | string = 'N/A';
+             if (audioEl && audioEl.error) {
+                 errorCode = audioEl.error.code;
+                 errorMsg = audioEl.error.message || errorMsg;
+             }
+            const detailedErrorMsg = `Playback Error (${errorCode}): ${errorMsg}`;
+            setPlaybackError(detailedErrorMsg);
+            toast({ title: "Playback Failed", description: detailedErrorMsg, variant: "destructive" });
             setIsPlaying(false); // Ensure state is correct on error
+            setIsLoadingAudio(false); // Stop loading on error
         });
     }
 }, [audioUrl, isLoadingAudio, isPlaying, playbackError, toast]);
@@ -201,13 +248,14 @@ export function VerseDisplay({
             className={cn(
                 "space-y-4 p-4 border rounded-md bg-card shadow",
                 // Make clickable only if audio is ready and playable
-                audioUrl && !playbackError && !isLoadingAudio ? "cursor-pointer hover:bg-muted/50 transition-colors" : ""
+                audioUrl && !playbackError ? "cursor-pointer hover:bg-muted/50 transition-colors" : ""
             )}
-            onClick={audioUrl && !playbackError && !isLoadingAudio ? togglePlayPause : undefined}
-             role={audioUrl && !playbackError ? "button" : undefined}
-             aria-label={audioUrl && !playbackError ? (isPlaying ? "Pause verse audio" : "Play verse audio") : undefined}
-             tabIndex={audioUrl && !playbackError ? 0 : -1}
-             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { audioUrl && !playbackError && !isLoadingAudio && togglePlayPause(); e.preventDefault(); }}}
+            // Only allow click to play/pause if audio is supposed to be available and no error occurred
+            onClick={audioUrl && !playbackError ? togglePlayPause : undefined}
+            role={audioUrl && !playbackError ? "button" : undefined}
+            aria-label={audioUrl && !playbackError ? (isPlaying ? "Pause verse audio" : "Play verse audio") : undefined}
+            tabIndex={audioUrl && !playbackError ? 0 : -1}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { audioUrl && !playbackError && togglePlayPause(); e.preventDefault(); }}}
           >
             <p lang="ar" dir="rtl" className="text-2xl font-medium text-right mb-2">{currentVerse.arabicText}</p>
             <p className="text-lg italic">"{currentVerse.translation}"</p>
@@ -215,40 +263,63 @@ export function VerseDisplay({
                <p className="text-sm text-muted-foreground">({surah.transliteration} {surah.id}:{currentVerse.id})</p>
                {/* Audio Controls */}
                <div className="flex items-center gap-3">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={togglePlayPause}
-                    disabled={isLoadingAudio || !audioUrl || !!playbackError}
-                    aria-label={isPlaying ? "Pause verse audio" : "Play verse audio"}
-                  >
-                    {isLoadingAudio ? <Loader2 className="h-5 w-5 animate-spin" /> : isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 text-primary" />}
-                  </Button>
-                   <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={toggleMute}
-                     disabled={!audioUrl || !!playbackError}
-                    aria-label={isMuted ? "Unmute" : "Mute"}
-                  >
-                    {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
-                  </Button>
-                   <Slider
-                    value={[isMuted ? 0 : volume]}
-                    max={1}
-                    step={0.05}
-                    className={cn("w-[100px]", !audioUrl || !!playbackError ? 'opacity-50 cursor-not-allowed' : '')}
-                    onValueChange={handleVolumeChange}
-                    aria-label="Volume control"
-                     disabled={!audioUrl || !!playbackError}
-                    />
+                   {/* Display Button or Loading/Error Indicator */}
+                  {isLoadingAudio ? (
+                     <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                   ) : playbackError ? (
+                       <TooltipProvider>
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                     <AlertTriangle className="h-5 w-5 text-destructive" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                     <p>{playbackError}</p>
+                                </TooltipContent>
+                            </Tooltip>
+                       </TooltipProvider>
+                    ) : audioUrl ? ( // Only show controls if URL exists and no error
+                        <>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={togglePlayPause}
+                                aria-label={isPlaying ? "Pause verse audio" : "Play verse audio"}
+                            >
+                                {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 text-primary" />}
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={toggleMute}
+                                aria-label={isMuted ? "Unmute" : "Mute"}
+                            >
+                                {isMuted || volume === 0 ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                            </Button>
+                            <Slider
+                                value={[isMuted ? 0 : volume]}
+                                max={1}
+                                step={0.05}
+                                className={cn("w-[100px]")}
+                                onValueChange={handleVolumeChange}
+                                aria-label="Volume control"
+                            />
+                        </>
+                    ) : (
+                         <span className="text-xs text-muted-foreground">No audio</span>
+                    )}
                </div>
             </div>
-             {playbackError && (
-                <p className="text-xs text-destructive text-center mt-2">{playbackError}</p>
-            )}
-              {!audioUrl && !isLoadingAudio && !playbackError && (
-                <p className="text-xs text-muted-foreground text-center mt-2">Audio not available for this verse/reciter.</p>
+             {/* Moved error display out of main clickable area if needed */}
+             {/* {playbackError && (
+                <Alert variant="destructive" className="mt-4">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Audio Error</AlertTitle>
+                    <AlertDescription>{playbackError}</AlertDescription>
+                </Alert>
+            )} */}
+              {/* Display "Audio not available" if URL is missing AND not loading */}
+               {!audioUrl && !isLoadingAudio && !playbackError && (
+                 <p className="text-xs text-muted-foreground text-center mt-2">Audio not available for this verse/reciter.</p>
              )}
           </div>
         ) : (
