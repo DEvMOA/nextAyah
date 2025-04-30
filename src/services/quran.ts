@@ -22,8 +22,7 @@ export const DEFAULT_RECITER_ID = 7; // Mishary Rashid Alafasy
 export const availableTranslations: TranslationInfo[] = [
     { id: 131, language: "English", name: "Dr. Mustafa Khattab, the Clear Quran", author: "Dr. Mustafa Khattab" },
     { id: 20, language: "English", name: "Saheeh International", author: "Saheeh International" },
-    // { id: 68, language: "French", name: "Le Noble Coran (Muhammad Hamidullah)", author: "Muhammad Hamidullah" }, // Removed as potentially non-functional
-    { id: 33, language: "French", name: "Hamidullah", author: "Muhammad Hamidullah" }, // Keep this Hamidullah French option
+    // { id: 33, language: "French", name: "Hamidullah", author: "Muhammad Hamidullah" }, // Removed due to API returning incorrect language text
     // Add more as desired
 ];
 export const DEFAULT_TRANSLATION_ID = 131; // Dr. Mustafa Khattab
@@ -186,10 +185,12 @@ export async function getVerse(
    if (isNaN(surahId) || surahId < 1 || surahId > 114 || isNaN(verseId) || verseId < 1) {
        throw new Error(`Invalid Surah or Verse ID: ${surahId}:${verseId}`);
    }
+    // Fallback logic: if the selected translationId is not available, use the default.
     if (isNaN(translationId) || !availableTranslations.some(t => t.id === translationId)) {
         console.warn(`Invalid or unavailable translationId ${translationId}, falling back to default ${DEFAULT_TRANSLATION_ID}`);
         translationId = DEFAULT_TRANSLATION_ID;
     }
+    // Fallback logic: if the selected reciterId is not available, use the default.
     if (isNaN(reciterId) || !availableReciters.some(r => r.id === reciterId)) {
         console.warn(`Invalid or unavailable reciterId ${reciterId}, falling back to default ${DEFAULT_RECITER_ID}`);
         reciterId = DEFAULT_RECITER_ID;
@@ -206,6 +207,10 @@ export async function getVerse(
    if (!verseData || !verseData.verse_number || verseData.verse_number !== verseId) {
        throw new Error(`Verse ${surahId}:${verseId} not found or invalid response.`);
    }
+
+   // Log the received translations to help debug API issues
+   // console.log(`Translations received for ${verseData.verse_key} (requested ${translationId}):`, verseData.translations);
+
 
   // Find the specific translation from the response, fall back if not found
   const translation = verseData.translations?.find(t => t.resource_id === translationId);
