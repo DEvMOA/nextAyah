@@ -11,7 +11,7 @@ import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 interface VerseDisplayProps {
   surah: Surah;
   currentVerse: Verse | null;
-  previousVerses: Verse[];
+  previousVerses: Verse[]; // Although removed from display, keep prop for potential future use or internal logic
   onGenerateRandom: () => void;
   onNavigate: (direction: 'previous' | 'next') => void;
   rangeStart?: number; // Optional: Start of the allowed verse range
@@ -21,7 +21,7 @@ interface VerseDisplayProps {
 export function VerseDisplay({
   surah,
   currentVerse,
-  previousVerses,
+  previousVerses, // Prop remains but is not used for rendering this section anymore
   onGenerateRandom,
   onNavigate,
   rangeStart = 1, // Default to full Surah range if not provided
@@ -43,24 +43,7 @@ export function VerseDisplay({
         </CardDescription>
       </CardHeader>
       <CardContent className="p-6 space-y-6">
-        {previousVerses.length > 0 && (
-          <div>
-            <h3 className="text-md font-medium mb-2 text-muted-foreground">Previous Verses (in this session):</h3>
-            {/* Consider making scroll area height dynamic or larger */}
-            <ScrollArea className="h-48 border rounded-md p-4 bg-secondary/50">
-              <div className="space-y-4">
-                {/* Ensure previous verses are sorted chronologically */}
-                {previousVerses.sort((a, b) => a.id - b.id).map((verse) => (
-                  <div key={`${verse.surahId}-${verse.id}`} className="text-sm border-b pb-2 last:border-b-0">
-                     <p lang="ar" dir="rtl" className="text-lg mb-1 text-right">{verse.arabicText}</p>
-                     <p className="text-muted-foreground italic">"{verse.translation}"</p>
-                     <p className="text-xs text-muted-foreground mt-1">({surah.transliteration} {surah.id}:{verse.id})</p>
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          </div>
-        )}
+        {/* Removed the Previous Verses section */}
         {currentVerse ? (
           <div className="space-y-4 p-4 border rounded-md bg-card shadow">
             <p lang="ar" dir="rtl" className="text-2xl font-medium text-right mb-2">{currentVerse.arabicText}</p>
